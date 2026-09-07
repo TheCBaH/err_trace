@@ -11,7 +11,7 @@
             "userGid": "1000",
             "upgradePackages": "false"
         },
-        "../features/ocaml": {
+        "ghcr.io/thecbah/ocaml-features/ocaml:1": {
             "version": "${localEnv:OCAML_VERSION}",
             "packages": "ocamlformat#0.28.1 ppx_expect base async_kernel lwt rresult cmdliner mirage-flow fmt logs yojson",
             "options": "ocaml-option-static",

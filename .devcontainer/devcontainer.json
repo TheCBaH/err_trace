@@ -12,12 +12,13 @@
             "userGid": "1000",
             "upgradePackages": "false"
         },
-        "./features/ocaml": {
+        "ghcr.io/thecbah/ocaml-features/ocaml:1": {
             "version": "${localEnv:OCAML_VERSION}",
             "packages": "ocamlformat#0.28.1 ppx_expect mdx js_of_ocaml-compiler js_of_ocaml-ppx",
             "optional-packages": "melange",
             "options": "ocaml-option-static",
-            "system-packages": "musl-dev musl-tools"
+            "system-packages": "musl-dev musl-tools",
+            "ocaml-version-overrides": "pp#1.2.0@4.12.* yojson#2.2.2@4.12.*"
         },
     },
     "customizations": {
