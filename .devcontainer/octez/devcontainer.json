@@ -11,7 +11,7 @@
             "userGid": "1000",
             "upgradePackages": "false"
         },
-        "../features/ocaml": {
+        "ghcr.io/thecbah/ocaml-features/ocaml:1": {
             "version": "${localEnv:OCAML_VERSION}",
             "base-packages": "dune",
             "optional-packages": "octez-libs",

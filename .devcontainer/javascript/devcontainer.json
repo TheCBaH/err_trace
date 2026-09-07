@@ -11,7 +11,7 @@
             "userGid": "1000",
             "upgradePackages": "false"
         },
-        "../features/ocaml": {
+        "ghcr.io/thecbah/ocaml-features/ocaml:1": {
             "version": "${localEnv:OCAML_VERSION}",
             "packages": "ocamlformat#0.28.1 ppx_expect js_of_ocaml-compiler js_of_ocaml-ppx melange",
             "options": "ocaml-option-static",

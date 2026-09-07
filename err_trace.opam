@@ -22,17 +22,5 @@ depends: [
   "odoc" {with-doc}
   "ppx_expect" {with-test}
   "mdx" {with-test}
-  "base" {with-test}
-  "async_kernel" {with-test}
-  "lwt" {with-test}
-  "rresult" {with-test}
-  "cmdliner" {with-test}
-  "mirage-flow" {with-test}
-  "fmt" {with-test}
-  "logs" {with-test}
-  "yojson" {with-test}
-  "js_of_ocaml" {with-test}
-  "js_of_ocaml-compiler" {with-test}
-  "js_of_ocaml-ppx" {with-test}
 ]
 dev-repo: "git+https://github.com/TheCBaH/err_trace.git"
