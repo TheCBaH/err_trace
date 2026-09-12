@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: devcontainer
-        uses: ./.github/workflows/actions/devcontainer
+        uses: TheCBaH/devcontainer-action/devcontainer@v1
         env:
           OCAML_VERSION: ${{ matrix.ocaml_version }}
         with:
@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: devcontainer
-        uses: ./.github/workflows/actions/devcontainer
+        uses: TheCBaH/devcontainer-action/devcontainer@v1
         env:
           OCAML_VERSION: ${{ matrix.ocaml_version }}
         with:
