@@ -15,5 +15,18 @@
  (tags
   ("error-handling" "typed-errors" tracing diagnostics javascript)))
 
+(package
+ (name err_trace-melange)
+ (allow_empty)
+ (synopsis "Typed recoverable errors with bounded provenance, for Melange")
+ (description
+  "The err_trace library built in Melange mode. Melange projects depend on this package instead of err_trace; both provide the module Err.")
+ (depends
+  (ocaml
+   (>= 4.12.0))
+  (dune
+   (>= 3.15))
+  melange))
+
 (using melange 0.1)
 (using mdx 0.4)

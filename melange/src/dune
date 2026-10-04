@@ -1,5 +1,11 @@
-; Melange build of the base library. The ordinary stanza in src/ is disabled
-; when this one is enabled so normal builds do not schedule melc rules.
+; Melange build of the base library, as its own package so that the native
+; package needs no melange. Same sources, copied rather than duplicated.
+; Melange projects depend on err_trace-melange instead of err_trace; both
+; define the module Err.
+;
+; Disabled unless ERR_TRACE_MELANGE (the err_trace-melange opam build) or
+; ERR_TRACE_TEST_MELANGE (the tests) is true, so default builds schedule no
+; melc rules even where melc is installed.
 
 (copy_files#
  (files ../../src/err.ml))
@@ -8,11 +14,13 @@
  (files ../../src/err.mli))
 
 (library
- (name err_trace)
- (public_name err_trace)
- (synopsis "Typed recoverable errors with bounded provenance")
+ (name err_trace_melange)
+ (public_name err_trace-melange)
+ (synopsis "Typed recoverable errors with bounded provenance, for Melange")
  (modes byte native melange)
  (enabled_if
-  (= %{env:ERR_TRACE_TEST_MELANGE=false} "true"))
+  (or
+   (= %{env:ERR_TRACE_MELANGE=false} "true")
+   (= %{env:ERR_TRACE_TEST_MELANGE=false} "true")))
  (wrapped false)
  (modules err))

@@ -33,6 +33,6 @@
  (emit_stdlib true)
  (enabled_if
   (= %{env:ERR_TRACE_TEST_MELANGE=false} "true"))
- (libraries err_trace melange)
+ (libraries err_trace_melange melange)
  (preprocess
   (pps melange.ppx)))

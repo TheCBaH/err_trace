@@ -15,4 +15,4 @@
   (emit_stdlib true)
   (enabled_if
    (= %{env:ERR_TRACE_TEST_MELANGE=false} "true"))
-  (libraries err_trace)))
+  (libraries err_trace_melange)))

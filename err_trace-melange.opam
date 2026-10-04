@@ -1,0 +1,20 @@
+opam-version: "2.0"
+version: "0.1.0"
+synopsis: "Typed recoverable errors with bounded provenance, for Melange"
+description: """
+The err_trace library built in Melange mode. Melange projects depend on this
+package instead of err_trace; both provide the module Err.
+"""
+maintainer: "err_trace maintainers"
+authors: ["Vladimir N. Silyaev"]
+license: "MIT"
+homepage: "https://github.com/TheCBaH/err_trace"
+bug-reports: "https://github.com/TheCBaH/err_trace/issues"
+tags: ["error-handling" "typed-errors" "tracing" "diagnostics" "javascript"]
+build: ["env" "ERR_TRACE_MELANGE=true" "dune" "build" "-p" name "-j" jobs]
+depends: [
+  "ocaml" {>= "4.12.0"}
+  "dune" {>= "3.15"}
+  "melange"
+]
+dev-repo: "git+https://github.com/TheCBaH/err_trace.git"
