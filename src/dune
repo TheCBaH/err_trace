@@ -2,7 +2,5 @@
  (name err_trace)
  (public_name err_trace)
  (synopsis "Typed recoverable errors with bounded provenance")
- (enabled_if
-  (<> %{env:ERR_TRACE_TEST_MELANGE=false} "true"))
  (wrapped false)
  (modules err))

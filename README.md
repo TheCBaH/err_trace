@@ -40,6 +40,9 @@ native bytecode, native code, js_of_ocaml, and Melange.
 opam install err_trace
 ```
 
+Melange projects install `err_trace-melange` instead and name that library
+(`err_trace-melange`); it provides the same `Err` module.
+
 Add `err_trace` to the `libraries` field of your Dune stanza, then use `Err`.
 The library itself only depends on the OCaml standard library and supports OCaml
 4.12 and later. OCaml 4.12 is the lower bound because the implementation uses
