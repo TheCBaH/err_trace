@@ -1048,6 +1048,19 @@ module Accum = struct
 
   let lift = function Ok value -> Ok value | Error error -> Error (Error.with_kind_untraced [ error ] error)
 
+  (* Joining two batches adds nothing to either: no event, no dispatch. With
+     both failed, the batch is the failures of the left then the right. *)
+  let join left right =
+    match (left, right) with
+    | Ok left, Ok right -> Ok (left, right)
+    | Error batch, Ok _ | Ok _, Error batch -> Error batch
+    | Error left, Error right -> Error (Error.make_at ~origin:None (Error.kind left @ Error.kind right))
+
+  module Syntax = struct
+    let ( let+ ) result f = match result with Ok value -> Ok (f value) | Error batch -> Error batch
+    let ( and+ ) = join
+  end
+
   let fold_errors combine = function
     | Ok value -> Ok value
     | Error batch -> (

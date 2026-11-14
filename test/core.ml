@@ -1627,3 +1627,38 @@ let%expect_test "dropped events are reported as not retained" =
         x
         3 trace events not retained
         |}])
+
+let%expect_test "applicative syntax joins the failures of every operand" =
+  with_config
+    (make_config ~actions:(Action.Set.of_list [ Action.Detect ]) ())
+    (fun () ->
+      let detected = ref 0 in
+      let handle = Monitor.install (fun _ -> incr detected) in
+      let parse input : (int, string) t =
+        if input >= 0 then return input else fail ("negative " ^ string_of_int input)
+      in
+      let sum left middle right =
+        Accum.Syntax.(
+          let+ left = Accum.lift (parse left)
+          and+ middle = Accum.lift (parse middle)
+          and+ right = Accum.lift (parse right) in
+          left + middle + right)
+      in
+      let show = function
+        | Ok total -> Printf.sprintf "ok %d" total
+        | Error batch -> String.concat "; " (Stdlib.List.map Error.kind (Error.kind batch))
+      in
+      print_endline (show (sum 1 2 3));
+      print_endline (show (sum 1 (-2) 3));
+      print_endline (show (sum (-1) 2 (-3)));
+      print_endline (show (sum (-1) (-2) (-3)));
+      Printf.printf "detected %d\n" !detected;
+      ignore (Monitor.remove handle);
+      [%expect
+        {|
+        ok 6
+        negative -2
+        negative -1; negative -3
+        negative -1; negative -2; negative -3
+        detected 6
+        |}])

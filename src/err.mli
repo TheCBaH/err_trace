@@ -766,6 +766,18 @@ module Accum : sig
   (** Lift one ordinary result into the accumulating error domain. An error becomes a one-element batch while retaining
       its origin and event trail. *)
 
+  (** Applicative syntax over batches: [let+ a = lift (parse x) and+ b = lift (parse y) in combine a b] runs every
+      operand and, when several fail, reports all their failures in operand order. Operands are [('a, 'e errors) t], so
+      lift an ordinary result with {!lift} and use {!map}, {!both} or another batch directly.
+
+      Joining adds no event of its own: each failure keeps the origin and trail it was detected with, and the joined
+      batch wrapper has no origin. A batch whose list is empty is an [Error] that reports no failures; {!map} and
+      {!iter} never build one, so it arises only from a hand-made value. *)
+  module Syntax : sig
+    val ( let+ ) : ('a, 'e errors) t -> ('a -> 'b) -> ('b, 'e errors) t
+    val ( and+ ) : ('a, 'e errors) t -> ('b, 'e errors) t -> ('a * 'b, 'e errors) t
+  end
+
   val fold_errors : ('e errors -> 'f) -> ('a, 'e errors) t -> ('a, 'f) t
   (** Collapse a batch into a payload chosen by the caller, so a function can accumulate internally without changing its
       published error domain. The combiner is mandatory because the library cannot invent a value in that domain.
