@@ -26,6 +26,9 @@ module Action = struct
     | Import -> "import"
     | Export -> "export"
 
+  type marking = [ `Filter | `Catch | `Import | `Export ]
+
+  let of_marking : marking -> t = function `Filter -> Filter | `Catch -> Catch | `Import -> Import | `Export -> Export
   let of_string name = List.find_opt (fun action -> to_string action = name) order
   let pp ppf action = Format.pp_print_string ppf (to_string action)
 
@@ -702,9 +705,9 @@ let map_error ?pos ?pp_error f = function
   | Ok value -> Ok value
   | Error error -> Error (Error.map_kind ?pos ?pp_error f error)
 
-let mark_error ?pos ?pp_error action = function
+let mark_error ?pos ?pp_error marking = function
   | Ok value -> Ok value
-  | Error error -> Error (Error.add_event ?pos ?pp_error action error)
+  | Error error -> Error (Error.add_event ?pos ?pp_error (Action.of_marking marking) error)
 
 let payload = function Ok value -> Ok value | Error error -> Error (Error.kind error)
 
@@ -719,7 +722,7 @@ let import ?pos ?pp_error f = function
       let error = Error.make_at ~origin:(Error.capture config ?source `Origin) (f kind) in
       Error (Error.add_event ~config ~creation:true ?pos ?pp_error Action.Import error)
 
-let export ?pos ?pp_error result = payload (mark_error ?pos ?pp_error Action.Export result)
+let export ?pos ?pp_error result = payload (mark_error ?pos ?pp_error `Export result)
 
 let protect ?pos ?pp_error ~catch f =
   try Ok (f ())
@@ -836,7 +839,7 @@ module type S = sig
   val map_none : ?pos:Source.pos -> error:(unit -> error) -> 'a option -> ('a, error Error.t) result
   val guard : ?pos:Source.pos -> error:error -> bool -> (unit, error Error.t) result
   val map_error : ?pos:Source.pos -> ('e -> error) -> ('a, 'e Error.t) result -> ('a, error Error.t) result
-  val mark_error : ?pos:Source.pos -> Action.t -> ('a, error Error.t) result -> ('a, error Error.t) result
+  val mark_error : ?pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
   val protect : ?pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result
   val import : ?pos:Source.pos -> ('e -> error) -> ('a, 'e) result -> ('a, error Error.t) result
   val export : ?pos:Source.pos -> ('a, error Error.t) result -> ('a, error) result

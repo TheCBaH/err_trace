@@ -72,7 +72,10 @@ module Origin : sig
 end
 
 module Action : sig
-  (** A semantic error transition, rather than an ordinary propagation step. *)
+  (** A semantic error transition, rather than an ordinary propagation step.
+
+      [t] is a closed public variant: a new constructor makes every exhaustive match in client code fail to compile, so
+      match with a wildcard if the program must survive a new release. *)
   type t =
     | Detect
     | Map
@@ -81,6 +84,11 @@ module Action : sig
     | Raise
     | Import
     | Export  (** [Detect] creates a failure; other constructors describe semantic boundaries. *)
+
+  type marking = [ `Filter | `Catch | `Import | `Export ]
+  (** The actions {!Err.mark_error} may add to an existing error: a boundary the error crosses. [Detect], [Map] and
+      [Raise] describe an error being created, converted or raised, which {!Err.fail}, {!Err.map_error} and
+      {!Err.raise_error} do, so marking one by hand could record a transition that did not happen. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render the action name. *)
@@ -411,8 +419,10 @@ val bind : ('a, 'e) t -> ('a -> ('b, 'e) t) -> ('b, 'e) t
 val map_error : ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'f -> unit) -> ('e -> 'f) -> ('a, 'e) t -> ('a, 'f) t
 (** Map errors and append [Map] only when selected. [pp_error] describes the mapped domain for matching monitors. *)
 
-val mark_error : ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> Action.t -> ('a, 'e) t -> ('a, 'e) t
-(** Append a selected semantic action only on errors. *)
+val mark_error :
+  ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> Action.marking -> ('a, 'e) t -> ('a, 'e) t
+(** Append a boundary action ([`Filter], [`Catch], [`Import] or [`Export]) only on errors, when the policy selects it.
+*)
 
 val payload : ('a, 'e) t -> ('a, 'e) Stdlib.result
 (** Drop the wrapper and keep the typed payload, recording no event. This is the unmarked unwrap, for tests, assertions,
@@ -596,7 +606,7 @@ module type S = sig
   (** {!Err.map_error} into this domain. The source domain stays polymorphic: only the destination is bound, which is
       the domain whose printer the [Map] observation needs. *)
 
-  val mark_error : ?pos:Source.pos -> Action.t -> ('a, error Error.t) result -> ('a, error Error.t) result
+  val mark_error : ?pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
   (** {!Err.mark_error} with the domain printer supplied. *)
 
   val protect : ?pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result

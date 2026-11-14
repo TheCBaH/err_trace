@@ -61,7 +61,7 @@ let () =
     |> Result.get_ok
   in
   Err.Config.set config;
-  let imported_failure = Err.fail (`Read "transport") |> Err.mark_error Err.Action.Import |> Result.map_error Fun.id in
+  let imported_failure = Err.fail (`Read "transport") |> Err.mark_error `Import |> Result.map_error Fun.id in
   let flow =
     Flow.{ reads = [ Ok (`Data (Cstruct.of_string "hello")); imported_failure ]; closed = false; written = [] }
   in

@@ -9,7 +9,7 @@ let has_prefix ~prefix value =
   String.length value >= prefix_length && String.sub value 0 prefix_length = prefix
 
 let to_cmdliner ~pp_error result =
-  result |> Err.mark_error Err.Action.Export
+  result |> Err.mark_error `Export
   |> Result.map_error (fun error -> `Msg (Format.asprintf "%a" (Err.Error.pp pp_error) error))
 
 let () =

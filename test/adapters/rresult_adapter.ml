@@ -4,8 +4,8 @@ let config =
     ~backtrace:Err.Config.Never ~max_events:8 ~max_frames:0 ~max_external_bytes:0
   |> Result.get_ok
 
-let of_rresult result = result |> Result.map_error Err.Error.make |> Err.mark_error Err.Action.Import
-let to_rresult result = result |> Err.mark_error Err.Action.Export |> Result.map_error Err.Error.kind
+let of_rresult result = result |> Result.map_error Err.Error.make |> Err.mark_error `Import
+let to_rresult result = result |> Err.mark_error `Export |> Result.map_error Err.Error.kind
 let actions error = Err.Error.events error |> List.map Err.Event.action
 
 let () =

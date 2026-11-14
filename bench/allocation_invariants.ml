@@ -80,7 +80,7 @@ let () =
         Config.set trail;
         let result = ref (Error base_error) in
         for _ = 1 to length do
-          result := mark_error Action.Map !result
+          result := map_error Fun.id !result
         done;
         let result = !result in
         measure_under trail ~iterations (fun () -> ignore (map_error Fun.id result))

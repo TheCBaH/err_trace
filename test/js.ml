@@ -29,7 +29,7 @@ let import_javascript_error ~pos error =
     | Some stack -> Some (Err.Stack.of_external ~runtime:"JavaScript" ~stack)
   in
   let origin = Err.Origin.make ~source:(Err.Source.of_pos pos) ?stack () in
-  Error (Err.Error.make_at ~origin (`Expected (Js.Js_error.message error))) |> Err.mark_error ~pos Err.Action.Catch
+  Error (Err.Error.make_at ~origin (`Expected (Js.Js_error.message error))) |> Err.mark_error ~pos `Catch
 
 let protect_javascript ~pos ~expected f =
   try Ok (f ())
@@ -37,7 +37,7 @@ let protect_javascript ~pos ~expected f =
     if expected error then import_javascript_error ~pos error else Js.Js_error.raise_ error
 
 let export_javascript_error error =
-  let error = Err.mark_error Err.Action.Export (Error error) |> Result.get_error in
+  let error = Err.mark_error `Export (Error error) |> Result.get_error in
   let message = Format.asprintf "%a" (Err.Error.pp pp_error) error in
   new%js Js.error_constr (Js.string message)
 

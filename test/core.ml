@@ -416,8 +416,8 @@ let%expect_test "monitor dispatch uses installation-order snapshots" =
       Fun.protect
         ~finally:(fun () -> remove_all [ first; second_handle ])
         (fun () ->
-          ignore (mark_error Action.Map (fail "x"));
-          ignore (mark_error Action.Map (fail "x"));
+          ignore (map_error Fun.id (fail "x"));
+          ignore (map_error Fun.id (fail "x"));
           print_endline (String.concat "," (Stdlib.List.rev !calls));
           [%expect "first,second,first"]))
 
@@ -446,8 +446,8 @@ let%expect_test "monitor filters, zero retention, and failure containment" =
         ~finally:(fun () -> remove_all [ map_monitor; detect_monitor ])
         (fun () ->
           let result = fail "x" in
-          ignore (mark_error Action.Map result);
-          ignore (mark_error Action.Map result);
+          ignore (map_error Fun.id result);
+          ignore (map_error Fun.id result);
           Printf.printf "%d,%d,%d,%d\n" !map_calls !failures !dropped !retained;
           [%expect "1,0,1,0"]))
 
@@ -467,11 +467,11 @@ let%expect_test "callback failure invokes its own hook and cannot replace result
       Fun.protect
         ~finally:(fun () -> ignore (Monitor.remove monitor))
         (fun () ->
-          let result = fail "application" |> mark_error Action.Map in
+          let result = fail "application" |> map_error Fun.id in
           [%expect {|
             Failure("callback failure")
             true |}];
-          ignore (mark_error Action.Map result);
+          ignore (map_error Fun.id result);
           print_endline (Error.kind (get_error result));
           print_int !hook_calls;
           print_newline ();
@@ -892,7 +892,7 @@ let%expect_test "the deterministic preset keeps the trail without capturing stac
       let error =
         fail ~pos:__POS__ `Boom
         |> map_error ~pos:__POS__ (fun `Boom -> `Wrapped)
-        |> mark_error ~pos:__POS__ Action.Export |> get_error
+        |> mark_error ~pos:__POS__ `Export |> get_error
       in
       (* The semantic trail survives; no stack is captured anywhere in it. *)
       print_endline (action_names error);
@@ -1411,8 +1411,8 @@ let%expect_test "a disabled action still maps the payload but changes nothing el
       | Error error -> Printf.printf "%d [%s]\n" (Error.kind error) (action_names error)
       | Ok () -> print_endline "ok");
       [%expect {| 3 [] |}];
-      print_bool (get_error (mark_error Action.Map failure) == get_error failure);
-      [%expect {| true |}])
+      print_bool (get_error (map_error Fun.id failure) == get_error failure);
+      [%expect {| false |}])
 
 let%expect_test "accessors expose the pieces of positions, external stacks and packed errors" =
   let pos = ("accessor.ml", 3, 4, 9) in
@@ -1496,13 +1496,26 @@ let%expect_test "trail invariants hold across random operations and policy chang
               Config.set !config;
               check (!current == before)
           | _ ->
-              let action = actions.(Random.State.int rng (Array.length actions)) in
+              let action, apply =
+                match Random.State.int rng 5 with
+                | 0 -> (Action.Filter, mark_error `Filter)
+                | 1 -> (Action.Catch, mark_error `Catch)
+                | 2 -> (Action.Import, mark_error `Import)
+                | 3 -> (Action.Export, mark_error `Export)
+                | _ -> (Action.Map, map_error Fun.id)
+              in
               let on = Action.Set.mem action (Config.actions !config) in
-              current := get_error (mark_error action (Error !current));
+              current := get_error (apply (Error !current : (unit, string) t));
               if on then begin
                 incr enabled;
                 last_max := Config.max_events !config
               end
+              else if action = Action.Map then
+                (* map_error rebuilds the record to map the payload even when Map is off. *)
+                check
+                  (Error.events !current == Error.events before
+                  || Error.events !current = Error.events before
+                     && Error.dropped_events !current = Error.dropped_events before)
               else check (!current == before));
           let retained = Stdlib.List.length (Error.events !current) in
           check (Error.origin !current == origin);
@@ -1519,7 +1532,7 @@ let%expect_test "a raising monitor is contained and its failure is recorded or k
     (make_config ~actions:(Action.Set.of_list [ Action.Map ]) ())
     (fun () ->
       let calls = ref 0 in
-      let trigger () = ignore (mark_error Action.Map (fail "x" : (unit, string) t)) in
+      let trigger () = ignore (map_error Fun.id (fail "x" : (unit, string) t)) in
       Stdlib.List.iter
         (fun (name, exn) ->
           let removed = Monitor.install (fun _ -> raise exn) in
@@ -1574,8 +1587,7 @@ let%expect_test "observations say whether their event created the error" =
   print_endline (collect all (fun () -> ignore (guard ~error:"x" false)));
   print_endline (collect all (fun () -> ignore (import Fun.id (Error "x" : (unit, string) result))));
   print_endline (collect all (fun () -> ignore (protect ~catch:(fun _ -> Some "x") (fun () -> failwith "boom"))));
-  print_endline
-    (collect all (fun () -> ignore (mark_error Action.Raise (map_error Fun.id (fail "x" : (unit, string) t)))));
+  print_endline (collect all (fun () -> ignore (mark_error `Export (map_error Fun.id (fail "x" : (unit, string) t)))));
   print_endline
     (collect
        (make_config ~actions:(Action.Set.of_list [ Action.Map ]) ())
@@ -1598,7 +1610,7 @@ let%expect_test "observations say whether their event created the error" =
     filter:true
     import:true
     catch:true
-    detect:true map:false raise:false
+    detect:true map:false export:false
     map:false
     detect:true map:false
     detect:true detect:true
@@ -1621,7 +1633,7 @@ let%expect_test "the start-up policy keeps the trail and captures no stacks" =
 
 let%expect_test "dropped events are reported as not retained" =
   with_config (make_config ~actions:Action.Set.all ~max_events:0 ()) (fun () ->
-      let error = get_error (mark_error Action.Raise (map_error Fun.id (fail "x" : (unit, string) t))) in
+      let error = get_error (mark_error `Export (map_error Fun.id (fail "x" : (unit, string) t))) in
       print_endline (Format.asprintf "%a" (Error.pp Format.pp_print_string) error);
       [%expect {|
         x
