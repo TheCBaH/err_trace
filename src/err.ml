@@ -98,10 +98,21 @@ module Stack = struct
 
   let of_raw_backtrace backtrace = Raw backtrace
 
+  (* Prefer the last whole line inside the limit; a single line longer than the
+     limit is cut at a UTF-8 character boundary instead. *)
+  let cut_point stack limit =
+    if stack.[limit] = '\n' then limit
+    else
+      match String.rindex_from_opt stack (limit - 1) '\n' with
+      | Some line_end when line_end > 0 -> line_end
+      | _ ->
+          let rec back cut = if cut > 0 && Char.code stack.[cut] land 0xC0 = 0x80 then back (cut - 1) else cut in
+          back limit
+
   let of_external ~runtime ~stack =
     let limit = (Atomic.get current_config).max_external_bytes in
     let truncated = String.length stack > limit in
-    let stack = if truncated then String.sub stack 0 limit else stack in
+    let stack = if truncated then String.sub stack 0 (cut_point stack limit) else stack in
     External { runtime; stack; truncated }
 
   (* [Printexc.backtrace_slots], not [raw_backtrace_length]. Melange's

@@ -25,7 +25,9 @@ module Stack : sig
   (** Wrap a native raw backtrace. *)
 
   val of_external : runtime:string -> stack:string -> t
-  (** Import a foreign runtime's stack string, bounded by {!Err.Config.max_external_bytes}.
+  (** Import a foreign runtime's stack string, bounded by {!Err.Config.max_external_bytes}. A longer stack is cut back
+      to its last whole line, or to a UTF-8 character boundary when no line break fits. [runtime] is a short label
+      chosen by the caller and is not bounded.
 
       This serves one narrow case: a JavaScript host that hands your program its own stack, which an adapter imports
       rather than captures. A library or a command-line program never calls it, and can ignore this constructor,

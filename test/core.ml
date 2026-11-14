@@ -1214,3 +1214,25 @@ let%expect_test "of_strings parses limits by hand and accepts groups in trace li
     "map,,filter": empty trace action at position 2
     ",map": empty trace action at position 1
     |}]
+
+let%expect_test "external stacks are cut at a line break or a UTF-8 boundary" =
+  let render ~limit stack =
+    with_config (make_config ~max_external_bytes:limit ()) (fun () ->
+        let stack = Stack.of_external ~runtime:"JS" ~stack in
+        Printf.printf "%S\n" (Format.asprintf "%a" Stack.pp stack))
+  in
+  render ~limit:3 "ab\xe2\x82\xaccd";
+  render ~limit:4 "ab\xe2\x82\xaccd";
+  render ~limit:5 "ab\xe2\x82\xaccd";
+  render ~limit:6 "aa\nbbbbbbbb";
+  render ~limit:8 "aa\nbb\nccccccc";
+  render ~limit:2 "\xe2\x82\xaccd";
+  [%expect
+    {|
+    "JS stack:\nab\n[truncated]"
+    "JS stack:\nab\n[truncated]"
+    "JS stack:\nab\226\130\172\n[truncated]"
+    "JS stack:\naa\n[truncated]"
+    "JS stack:\naa\nbb\n[truncated]"
+    "stack unavailable"
+    |}]
