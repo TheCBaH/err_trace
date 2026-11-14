@@ -255,7 +255,9 @@ module Config : sig
   val debug : t
   (** All-event preset with event stacks. *)
 
-  (** Process-wide atomic configuration. Change it during startup where possible. *)
+  (** Process-wide atomic configuration. Change it during startup where possible. The policy is global rather than
+      per-error or per-domain because errors are plain values with no handle to a context: whatever creates or marks an
+      error reads the policy current at that moment. *)
   val get : unit -> t
   (** Read the current process-wide policy atomically. *)
 
@@ -326,7 +328,10 @@ end
 
 module Monitor : sig
   type t
-  (** A handle for one installed monitor. Pass it to {!remove} when the monitor is no longer needed. *)
+  (** A handle for one installed monitor. Pass it to {!remove} when the monitor is no longer needed.
+
+      The set of monitors, like the {!Config} policy, is process-global: every domain and thread dispatches to the same
+      monitors, because an error value carries no handle to a registry of its own. Install monitors during startup. *)
 
   type callback = Observation.t -> unit
   (** A synchronous callback invoked for each matching enabled event. Callbacks must be short, non-blocking, and must
@@ -338,7 +343,10 @@ module Monitor : sig
 
   val remove : t -> bool
   (** Idempotently remove a monitor. It returns [true] only for the call that changes an installed monitor to removed.
-  *)
+
+      Dispatch works on a snapshot of the monitors installed when it started, taken in installation order. A monitor
+      removed by an earlier callback of the {e same} dispatch is therefore still called once more in that dispatch, and
+      is skipped from the next event on. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render whether this monitor handle is currently [installed] or [removed]. *)
@@ -416,7 +424,12 @@ module Escape : sig
       the wrapper built at the throw and the catch guaranteed by construction.
 
       It is the companion of {!Err.protect}: [protect] absorbs an exception raised by {e foreign} code, while
-      [with_escape] establishes an exit for the {e current} module's own recursion. *)
+      [with_escape] establishes an exit for the {e current} module's own recursion.
+
+      Two caveats. A catch-all handler ([try ... with _ ->]) between {!throw} and its {!with_escape} absorbs the escape
+      like any exception, so code inside the walk must let it pass. And a token is not a cross-thread channel: thrown
+      from another thread or domain, the exception unwinds that thread's own stack and never reaches the frame that owns
+      the token. *)
 
   type 'e t
   (** A token authorising an exit from one {!with_escape} call. It is valid only on the call stack that {!with_escape}
