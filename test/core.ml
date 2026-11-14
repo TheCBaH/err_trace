@@ -1236,3 +1236,18 @@ let%expect_test "external stacks are cut at a line break or a UTF-8 boundary" =
     "JS stack:\naa\nbb\n[truncated]"
     "stack unavailable"
     |}]
+
+let%expect_test "action sets can be edited and listed" =
+  let names set = String.concat "," (Stdlib.List.map (Format.asprintf "%a" Action.pp) (Action.Set.to_list set)) in
+  let set = Action.Set.(empty |> add Action.Raise |> add Action.Detect |> add Action.Raise) in
+  print_endline (names set);
+  [%expect "detect,raise"];
+  print_endline (names (Action.Set.remove Action.Raise (Action.Set.remove Action.Map set)));
+  [%expect "detect"];
+  print_endline (names (Action.Set.union set (Action.Set.of_list [ Action.Export; Action.Map ])));
+  [%expect "detect,map,raise,export"];
+  print_bool (Action.Set.equal Action.Set.boundaries (Action.Set.remove Action.Detect Action.Set.all));
+  print_bool (Action.Set.equal Action.Set.empty set);
+  [%expect {|
+    true
+    false |}]

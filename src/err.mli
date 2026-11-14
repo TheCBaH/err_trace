@@ -98,6 +98,21 @@ module Action : sig
     val mem : action -> t -> bool
     (** Test action membership. *)
 
+    val add : action -> t -> t
+    (** [add action set] selects [action] in addition to [set]. *)
+
+    val remove : action -> t -> t
+    (** [remove action set] deselects [action]; absent actions are ignored. *)
+
+    val union : t -> t -> t
+    (** The actions selected by either set. *)
+
+    val to_list : t -> action list
+    (** The selected actions in declaration order ([Detect] first), without duplicates. *)
+
+    val equal : t -> t -> bool
+    (** Whether two sets select the same actions. *)
+
     val pp : Format.formatter -> t -> unit
     (** Render selected actions, or [off] for the empty set. *)
   end

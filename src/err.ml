@@ -38,6 +38,11 @@ module Action = struct
     let all = of_list order
     let boundaries = of_list (List.filter (fun action -> action <> Detect) order)
     let mem action set = set land bit action <> 0
+    let add action set = set lor bit action
+    let remove action set = set land lnot (bit action)
+    let union = ( lor )
+    let to_list set = List.filter (fun action -> mem action set) order
+    let equal = Int.equal
 
     let pp ppf set =
       let selected = List.filter (fun action -> mem action set) order in
