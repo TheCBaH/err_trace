@@ -76,7 +76,7 @@ let max_events_cap = 4096
 let fast_config =
   { actions = Action.Set.empty; backtrace = Never; max_events = 0; max_frames = 0; max_external_bytes = 16 * 1024 }
 
-let default_config =
+let with_stacks_config =
   {
     actions = Action.Set.boundaries;
     backtrace = Origin;
@@ -101,7 +101,7 @@ let deterministic_config =
 let debug_config =
   { actions = Action.Set.all; backtrace = Events; max_events = 64; max_frames = 64; max_external_bytes = 16 * 1024 }
 
-let current_config = Atomic.make default_config
+let current_config = Atomic.make deterministic_config
 
 module Stack = struct
   type t =
@@ -233,8 +233,8 @@ end
    which Melange does not implement: calling it there throws "not polyfilled"
    and so replaces the exception being propagated with an unrelated one. That
    turns every foreign exception crossing [protect] or [Escape.with_escape] into
-   a spurious failure under any policy that captures stacks, including the
-   default one.
+   a spurious failure under any policy that captures stacks, such as
+   [with_stacks].
 
    Reattach only when the captured backtrace has resolvable frames. That is
    exactly when reattaching preserves something, it is false on Melange, and it
@@ -564,7 +564,8 @@ module Config = struct
 
   let fast = fast_config
   let deterministic = deterministic_config
-  let default = default_config
+  let with_stacks = with_stacks_config
+  let initial = deterministic_config
   let debug = debug_config
   let get () = Atomic.get current_config
   let set config = Atomic.set current_config config
@@ -588,7 +589,7 @@ module Config = struct
 
   (* [Set.t] is a bit mask, so a group name in a list is a union. *)
   let parse_actions = function
-    | None | Some "" -> Ok default.actions
+    | None | Some "" -> Ok initial.actions
     | Some value ->
         let rec loop selected position = function
           | [] -> Ok selected
@@ -614,7 +615,7 @@ module Config = struct
      {!pp_backtrace} prints and what [trace] uses, [never] names the constructor
      and was this parser's output in earlier revisions. *)
   let parse_backtrace = function
-    | None -> Ok default.backtrace
+    | None -> Ok initial.backtrace
     | Some ("off" | "never") -> Ok Never
     | Some "origin" -> Ok Origin
     | Some "events" -> Ok Events
@@ -663,9 +664,9 @@ module Config = struct
         parse_limit `Max_external_bytes max_external_bytes )
     with
     | Ok actions, Ok backtrace, Ok max_events, Ok max_frames, Ok max_external_bytes -> (
-        let max_events = value_or default.max_events max_events in
-        let max_frames = value_or default.max_frames max_frames in
-        let max_external_bytes = value_or default.max_external_bytes max_external_bytes in
+        let max_events = value_or initial.max_events max_events in
+        let max_frames = value_or initial.max_frames max_frames in
+        let max_external_bytes = value_or initial.max_external_bytes max_external_bytes in
         match validate ~actions ~backtrace ~max_events ~max_frames ~max_external_bytes with
         | Ok config -> Ok config
         | Error error -> Error (Error.make ~pp_error:pp_of_strings_error (error : make_error :> of_strings_error)))

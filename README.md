@@ -60,9 +60,10 @@ Pick one policy during process startup:
   stacks. It disables the whole semantic trail, not just stack capture.
 - `Err.Config.set Err.Config.deterministic` keeps the boundary event trail and
   captures no stacks. This is the production preset for a program that wants
-  identical diagnostics on every backend.
-- `Err.Config.set Err.Config.default` retains selected boundary events and an
-  origin stack.
+  identical diagnostics on every backend. It is the policy in force at
+  program start.
+- `Err.Config.set Err.Config.with_stacks` adds an origin stack to the boundary
+  events of `deterministic` (this preset was named `default`).
 - `Err.Config.set Err.Config.debug` records every semantic action.
 
 The two sources of nondeterminism are independent: `actions` decides how much

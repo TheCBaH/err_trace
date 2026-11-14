@@ -24,7 +24,7 @@ let () =
     set config (fun () -> measure ~iterations label (fun () -> ignore (map (( + ) 1) (return 1 : (int, string) t))))
   in
   success Config.fast "success / fast";
-  success Config.default "success / default";
+  success Config.with_stacks "success / with_stacks";
   success Config.debug "success / debug";
   let never = config ~actions:Action.Set.empty ~backtrace:Config.Never ~max_events:0 in
   let origin = config ~actions:Action.Set.empty ~backtrace:Config.Origin ~max_events:0 in
@@ -64,4 +64,4 @@ let () =
         ~finally:(fun () -> Stdlib.List.iter (fun handle -> ignore (Monitor.remove handle)) handles)
         (fun () ->
           measure ~iterations:10_000 "monitor only / three" (fun () -> ignore (map_error Fun.id (Error base_error)))));
-  Config.set Config.default
+  Config.set Config.with_stacks

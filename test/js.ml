@@ -148,7 +148,7 @@ let () =
      of the backtrace machinery. This backend does not implement
      [caml_restore_raw_backtrace], so it only holds because the library
      reattaches a backtrace solely when it has resolvable frames. Exercising it
-     needs a policy that captures stacks, as [Config.default] does. *)
+     needs a policy that captures stacks, as [Config.with_stacks] does. *)
   let capturing =
     Err.Config.make ~actions:Err.Action.Set.all ~backtrace:Err.Config.Origin ~max_events:8 ~max_frames:8
       ~max_external_bytes:0

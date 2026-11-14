@@ -247,11 +247,14 @@ module Config : sig
       native OCaml, bytecode, js_of_ocaml, and Melange wherever call sites supply [~pos:__POS__].
 
       The two sources of nondeterminism are independent: {!actions} decides how much semantic trail is kept, and
-      {!val-backtrace} decides whether call stacks are captured. The [fast]/[default]/[debug] ladder bundles them; this
-      preset is the useful off-diagonal combination. *)
+      {!val-backtrace} decides whether call stacks are captured. The [fast]/[with_stacks]/[debug] ladder bundles them;
+      this preset is the useful off-diagonal combination, and it is the policy in force before any call to {!set}.
+      Absent settings in {!of_strings} are read from it too. *)
 
-  val default : t
-  (** Boundary-event preset with origin stacks. This is the policy in force before any call to {!set}. *)
+  val with_stacks : t
+  (** Boundary-event preset with origin stacks: {!deterministic} plus a call stack captured where each error is created.
+      Stacks differ between native OCaml, bytecode, js_of_ocaml and Melange. This was named [default] and was the policy
+      in force at start-up; the start-up policy is now {!deterministic}. *)
 
   val debug : t
   (** All-event preset with event stacks. *)

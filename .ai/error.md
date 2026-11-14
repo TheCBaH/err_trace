@@ -271,18 +271,21 @@ Three presets are provided:
 | Preset | Actions | Intended use |
 |---|---|---|
 | `Config.fast` | none | Performance-sensitive production path |
-| `Config.default` | `Action.Set.boundaries` | Balanced diagnostics |
+| `Config.deterministic` | `Action.Set.boundaries` | Production default, no stacks |
+| `Config.with_stacks` | `Action.Set.boundaries` | Boundary trail plus origin stacks (was `default`) |
 | `Config.debug` | `Action.Set.all` | Debugging and tests |
 
 `Action.Set.boundaries` is every action except `Detect`. The complete presets
 are:
 
 - `fast`: no actions, `Never`, 0 events, 0 frames, 16 KiB external stacks;
-- `default`: boundary actions, `Origin`, 32 events, 32 frames, 16 KiB external
-  stacks;
+- `deterministic`: boundary actions, `Never`, 32 events, 0 frames, 16 KiB
+  external stacks;
+- `with_stacks`: boundary actions, `Origin`, 32 events, 32 frames, 16 KiB
+  external stacks (named `default` before the start-up policy changed);
 - `debug`: all actions, `Events`, 64 events, 64 frames, 16 KiB external stacks.
 
-`Config.default` is also the configuration installed at program start.
+`Config.deterministic` is the configuration installed at program start.
 
 ### Backtrace mode
 
@@ -376,7 +379,7 @@ ERR_MAX_EXTERNAL_BYTES=<non-negative integer>
 server, browser, and test hosts can obtain configuration through their normal
 mechanisms. Action names are the lowercase constructor names (`detect`, `map`,
 `filter`, `catch`, `raise`, `import`, `export`). An absent argument takes its
-value from `Config.default`, not from the currently installed configuration, so
+value from `Config.deterministic`, not from the currently installed configuration, so
 parsing the same host settings twice yields the same policy.
 
 ### Performance expectations

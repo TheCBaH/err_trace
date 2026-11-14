@@ -41,8 +41,10 @@ Choose a policy during process startup with {!Err.Config.set}:
 - {!Err.Config.fast} records no events at all and captures no stacks: it
   disables the whole semantic trail, not only stack capture.
 - {!Err.Config.deterministic} keeps the boundary trail and captures no stacks.
-  This is the production preset for identical diagnostics on every backend.
-- {!Err.Config.default} retains selected boundary events and an origin stack.
+  This is the production preset for identical diagnostics on every backend,
+  and the policy in force at program start.
+- {!Err.Config.with_stacks} retains the boundary events and an origin stack
+  (this preset was named [default]).
 - {!Err.Config.debug} records every semantic action.
 
 How much trail is kept and whether stacks are captured are independent axes;

@@ -61,7 +61,7 @@ end
 
 let%expect_test "configuration presets, parsing, and portable bounds" =
   print_bool (Action.Set.mem Action.Detect (Config.actions Config.debug));
-  print_bool (not (Action.Set.mem Action.Detect (Config.actions Config.default)));
+  print_bool (not (Action.Set.mem Action.Detect (Config.actions Config.with_stacks)));
   print_bool (Config.max_events Config.fast = 0);
   [%expect {|
     true
@@ -812,7 +812,7 @@ let%expect_test "configuration vocabulary round-trips through of_strings" =
   in
   Stdlib.List.iter
     (fun config -> print_bool (reparse config))
-    [ Config.fast; Config.deterministic; Config.default; Config.debug ];
+    [ Config.fast; Config.deterministic; Config.with_stacks; Config.debug ];
   [%expect {|
     true
     true
@@ -1603,4 +1603,18 @@ let%expect_test "observations say whether their event created the error" =
     detect:true map:false
     detect:true detect:true
     map:false
+    |}]
+
+let%expect_test "the start-up policy keeps the trail and captures no stacks" =
+  let show config = Format.asprintf "%a" Config.pp config in
+  print_bool (show (Config.get ()) = show Config.deterministic);
+  print_bool
+    (match Config.of_strings ~trace:None ~backtrace:None ~max_events:None ~max_frames:None ~max_external_bytes:None with
+    | Ok config -> show config = show Config.deterministic
+    | Error _ -> false);
+  print_bool (Config.backtrace Config.with_stacks = Config.Origin);
+  [%expect {|
+    true
+    true
+    true
     |}]

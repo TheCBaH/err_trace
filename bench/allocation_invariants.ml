@@ -37,14 +37,14 @@ let () =
         measure_under config ~iterations (fun () -> ignore (map (( + ) 1) (return 1 : (int, string) t)))
       in
       equal "successful propagation is policy-independent"
-        [ success Config.fast; success Config.deterministic; success Config.default; success Config.debug ];
+        [ success Config.fast; success Config.deterministic; success Config.with_stacks; success Config.debug ];
 
       let values = Stdlib.List.init 32 Fun.id in
       let accumulation config =
         measure_under config ~iterations (fun () -> ignore (Accum.iter (fun _ -> return ()) values))
       in
       equal "successful accumulation is policy-independent"
-        [ accumulation Config.fast; accumulation Config.default; accumulation Config.debug ];
+        [ accumulation Config.fast; accumulation Config.with_stacks; accumulation Config.debug ];
 
       let never = config ~actions:Action.Set.empty ~backtrace:Config.Never ~max_events:0 in
       let origin = config ~actions:Action.Set.empty ~backtrace:Config.Origin ~max_events:0 in
