@@ -1274,3 +1274,44 @@ let%expect_test "throw_error and or_throw locate a throw after the frame returne
         after.ml:4:1-5
         none
         |}])
+
+let%expect_test "protect retains at most max_frames of the caught stack" =
+  Printexc.record_backtrace true;
+  let rec deep n = if n = 0 then failwith "boom" else 1 + deep (n - 1) in
+  let claim = function Failure message -> Some message | _ -> None in
+  let retained ~backtrace ~max_frames =
+    with_config (make_config ~backtrace ~max_frames ()) (fun () ->
+        let error = get_error (protect ~catch:claim (fun () -> deep 5)) in
+        match Option.bind (Error.origin error) Origin.stack with
+        | None -> None
+        | Some stack ->
+            let lines =
+              String.split_on_char '\n' (Format.asprintf "%a" Stack.pp stack) |> Stdlib.List.filter (( <> ) "")
+            in
+            let truncated = Stdlib.List.mem "[truncated]" lines in
+            Some
+              ((Stdlib.List.length lines - if truncated then 1 else 0), truncated, Stack.to_raw_backtrace stack <> None))
+  in
+  (* Frame counts and availability differ between bytecode and native, so every
+     assertion is relative to the unbounded stack. *)
+  let full = retained ~backtrace:Config.Origin ~max_frames:64 in
+  let full_frames = match full with Some (frames, _, _) -> frames | None -> 0 in
+  print_bool (match full with Some (_, truncated, raw) -> (not truncated) && raw | None -> true);
+  print_bool (retained ~backtrace:Config.Origin ~max_frames:0 = None);
+  Stdlib.List.iter
+    (fun backtrace ->
+      print_bool
+        (match retained ~backtrace ~max_frames:1 with
+        | None -> full = None
+        | Some (frames, truncated, raw) -> frames <= 1 && truncated = (full_frames > 1) && raw = not truncated))
+    [ Config.Origin; Config.Events ];
+  [%expect {|
+    true
+    true
+    true
+    true |}];
+  with_config (make_config ~backtrace:Config.Origin ~max_frames:1 ()) (fun () ->
+      match protect ~catch:(fun _ -> None) (fun () -> deep 5) with
+      | exception Failure _ -> print_bool (Printexc.raw_backtrace_length (Printexc.get_raw_backtrace ()) >= full_frames)
+      | _ -> print_endline "not raised");
+  [%expect {| true |}]

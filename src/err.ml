@@ -99,7 +99,10 @@ let debug_config =
 let current_config = Atomic.make default_config
 
 module Stack = struct
-  type t = Raw of Printexc.raw_backtrace | External of { runtime : string; stack : string; truncated : bool }
+  type t =
+    | Raw of Printexc.raw_backtrace
+    | Slots of Printexc.backtrace_slot array
+    | External of { runtime : string; stack : string; truncated : bool }
 
   let of_raw_backtrace backtrace = Raw backtrace
 
@@ -134,8 +137,25 @@ module Stack = struct
   let raw_is_available backtrace =
     match Printexc.backtrace_slots backtrace with Some slots -> Array.length slots <> 0 | None -> false
 
-  let is_available = function Raw backtrace -> raw_is_available backtrace | External { stack; _ } -> stack <> ""
-  let to_raw_backtrace = function Raw backtrace -> Some backtrace | External _ -> None
+  (* The stack of an exception caught by [protect], bounded to [max_frames]
+     when it is retained. Slots rather than raw entries: there is no way back
+     from a cut array of entries to a [raw_backtrace], and Melange's entry
+     accessors throw where [backtrace_slots] answers [None]. A stack that fits
+     is kept raw, so it can still be re-raised. *)
+  let of_caught ~max_frames backtrace =
+    if max_frames <= 0 then None
+    else
+      match Printexc.backtrace_slots backtrace with
+      | None -> None
+      | Some slots when Array.length slots <= max_frames -> Some (Raw backtrace)
+      | Some slots -> Some (Slots (Array.sub slots 0 max_frames))
+
+  let is_available = function
+    | Raw backtrace -> raw_is_available backtrace
+    | Slots slots -> Array.length slots <> 0
+    | External { stack; _ } -> stack <> ""
+
+  let to_raw_backtrace = function Raw backtrace -> Some backtrace | Slots _ | External _ -> None
 
   let pp_lines ppf text =
     match String.split_on_char '\n' text with
@@ -149,6 +169,14 @@ module Stack = struct
     (match stack with
     | Raw backtrace when not (raw_is_available backtrace) -> Format.pp_print_string ppf "stack unavailable"
     | Raw backtrace -> pp_lines ppf (Printexc.raw_backtrace_to_string backtrace)
+    | Slots slots when Array.length slots = 0 -> Format.pp_print_string ppf "stack unavailable"
+    | Slots slots ->
+        Array.iteri
+          (fun index slot ->
+            if index > 0 then Format.pp_print_cut ppf ();
+            Format.pp_print_string ppf (Option.value (Printexc.Slot.format index slot) ~default:"unknown location"))
+          slots;
+        Format.fprintf ppf "@,[truncated]"
     | External { stack = ""; _ } -> Format.pp_print_string ppf "stack unavailable"
     | External { runtime; stack; truncated } ->
         Format.fprintf ppf "%s stack:@,%a" runtime pp_lines stack;
@@ -638,18 +666,16 @@ let protect ?pos ?pp_error ~catch f =
   with exn -> (
     let config = Config.get () in
     let raw_backtrace = Printexc.get_raw_backtrace () in
-    let retained_backtrace =
-      match Config.backtrace config with Config.Never -> None | Config.Origin | Config.Events -> Some raw_backtrace
-    in
     match catch exn with
     | None -> reraise exn raw_backtrace
     | Some kind ->
         let source = Option.map Source.of_pos pos in
-        let origin =
-          match retained_backtrace with
-          | None -> Origin.make ?source ()
-          | Some backtrace -> Origin.make ?source ~stack:(Stack.of_raw_backtrace backtrace) ()
+        let stack =
+          match Config.backtrace config with
+          | Config.Never -> None
+          | Config.Origin | Config.Events -> Stack.of_caught ~max_frames:(Config.max_frames config) raw_backtrace
         in
+        let origin = Origin.make ?source ?stack () in
         Error (Error.add_event ~config ?pos ?pp_error Action.Catch (Error.make_at ~origin kind)))
 
 module Escape = struct

@@ -19,7 +19,8 @@ end
 
 module Stack : sig
   type t
-  (** A native raw backtrace or a bounded stack imported from another runtime. *)
+  (** A native stack or a bounded stack imported from another runtime. A stack caught by {!Err.protect} is cut to
+      {!Err.Config.max_frames} frames before it is retained. *)
 
   val of_raw_backtrace : Printexc.raw_backtrace -> t
   (** Wrap a native raw backtrace. *)
@@ -37,7 +38,9 @@ module Stack : sig
   (** Whether this stack contains available diagnostic data. *)
 
   val to_raw_backtrace : t -> Printexc.raw_backtrace option
-  (** Return a native backtrace when this is not an external stack. *)
+  (** The native backtrace this stack was built from, when all of it was kept. [None] for an imported external stack,
+      and for a native stack that {!Err.protect} cut to {!Err.Config.max_frames}: a prefix of frames cannot be turned
+      back into a raw backtrace, so use {!pp} to see what was retained. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render the stack. *)
