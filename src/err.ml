@@ -247,8 +247,20 @@ end
    This raw backtrace is captured independently of the tracing policy. The
    policy controls provenance retained in typed errors; it must not change the
    semantics of an unrelated exception that merely crosses an Err boundary. *)
-let reraise exn backtrace =
-  if Stack.raw_is_available backtrace then Printexc.raise_with_backtrace exn backtrace else raise exn
+(* Whether [Printexc.raise_with_backtrace] works on this backend, found once at
+   start-up (spike S3): true natively and under js_of_ocaml, false on Melange,
+   where it throws "not polyfilled". The probe replaces the backtrace of the
+   exception in flight, so it must stay a start-up computation and never run
+   inside a handler. Frames being resolvable is a different question, answered
+   by [Stack.raw_is_available]. *)
+let can_restore_backtrace =
+  let exception Probe in
+  match Printexc.raise_with_backtrace Probe (Printexc.get_callstack 0) with
+  | _ -> false
+  | exception Probe -> true
+  | exception _ -> false
+
+let reraise exn backtrace = if can_restore_backtrace then Printexc.raise_with_backtrace exn backtrace else raise exn
 
 module Origin = struct
   type t = { source : Source.t option; stack : Stack.t option }
