@@ -851,4 +851,55 @@ module Located : sig
   val export_exn : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> ('a, exn) result
   val raise_error : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> 'e Error.t -> 'a
   val or_raise : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> 'a
+
+  (** The operations of {!Make}, with [~pos] mandatory. *)
+  module type S = sig
+    type error
+
+    val pp_error : Format.formatter -> error -> unit
+    val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> ('a, error Error.t) result -> unit
+    val fail : pos:Source.pos -> error -> ('a, error Error.t) result
+    val of_option : pos:Source.pos -> error -> 'a option -> ('a, error Error.t) result
+    val map_none : pos:Source.pos -> error:(unit -> error) -> 'a option -> ('a, error Error.t) result
+    val guard : pos:Source.pos -> error:error -> bool -> (unit, error Error.t) result
+    val map_error : pos:Source.pos -> ('e -> error) -> ('a, 'e Error.t) result -> ('a, error Error.t) result
+    val mark_error : pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
+    val protect : pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result
+    val import : pos:Source.pos -> ('e -> error) -> ('a, 'e) result -> ('a, error Error.t) result
+    val export : pos:Source.pos -> ('a, error Error.t) result -> ('a, error) result
+    val to_exn : pos:Source.pos -> error Error.t -> exn
+    val export_exn : pos:Source.pos -> ('a, error Error.t) result -> ('a, exn) result
+    val raise_error : pos:Source.pos -> error Error.t -> 'a
+    val or_raise : pos:Source.pos -> ('a, error Error.t) result -> 'a
+    val with_escape : (error Escape.t -> 'a) -> ('a, error Error.t) result
+    val throw : error Escape.t -> pos:Source.pos -> error -> 'a
+
+    module List : sig
+      val map2 :
+        pos:Source.pos ->
+        unequal_lengths:(int -> int -> error) ->
+        ('a -> 'b -> ('c, error Error.t) result) ->
+        'a list ->
+        'b list ->
+        ('c list, error Error.t) result
+
+      val iter2 :
+        pos:Source.pos ->
+        unequal_lengths:(int -> int -> error) ->
+        ('a -> 'b -> (unit, error Error.t) result) ->
+        'a list ->
+        'b list ->
+        (unit, error Error.t) result
+    end
+
+    module Error : sig
+      val make : pos:Source.pos -> error -> error Error.t
+      val map_kind : pos:Source.pos -> ('e -> error) -> 'e Error.t -> error Error.t
+      val pp : Format.formatter -> error Error.t -> unit
+      val pp_kind : Format.formatter -> error Error.t -> unit
+    end
+  end
+
+  (** {!Err.Make} with [~pos] mandatory on every operation that takes [?pos]. *)
+  module Make (D : Domain) : S with type error = D.error
 end

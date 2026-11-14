@@ -1731,3 +1731,26 @@ let%expect_test "the unlocated counter finds calls that omit the position" =
         after reset: 0
         located.ml:7:2-9
         |}])
+
+module Located_bound = Located.Make (Printer_storage)
+
+let%expect_test "a bound domain can require positions" =
+  with_config (make_config ()) (fun () ->
+      let failure = Located_bound.fail ~pos:("bound.ml", 4, 2, 9) (`Missing_item 3) |> get_error in
+      print_endline
+        (match Option.bind (Error.origin failure) Origin.source with
+        | Some source -> Format.asprintf "%a|%a" Source.pp source Located_bound.Error.pp_kind failure
+        | None -> "no source");
+      print_endline
+        (match
+           Located_bound.List.map2 ~pos:("bound.ml", 6, 2, 9)
+             ~unequal_lengths:(fun left right -> `Missing_item ((left * 10) + right))
+             (fun a b -> Ok (a + b))
+             [ 1 ] [ 1; 2 ]
+         with
+        | Ok _ -> "ok"
+        | Error error -> Format.asprintf "%a" Located_bound.Error.pp_kind error);
+      [%expect {|
+        bound.ml:4:2-9|storage item 3 is missing
+        storage item 12 is missing
+        |}])

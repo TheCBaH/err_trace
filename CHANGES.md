@@ -47,7 +47,8 @@
 
 ### Added
 
-- `Err.Located`, the operations that take `?pos` with `~pos` mandatory, and
+- `Err.Located`, the operations that take `?pos` with `~pos` mandatory
+  (`Located.Make(D)` binds a domain printer as `Make(D)` does), and
   `Err.Stats.unlocated`, a count of events recorded without a position;
   `Accum.Syntax` (`let+`, `and+`); `Observation.is_creation`; `Monitor.install ?on_failure` and
   `Monitor.last_failure`; `Action.Set.add`, `remove`, `union`, `to_list`,

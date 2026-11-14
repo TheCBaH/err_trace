@@ -1113,4 +1113,87 @@ module Located = struct
   let export_exn ~pos ~pp_error result = export_exn ~pos ~pp_error result
   let raise_error ~pos ~pp_error error = raise_error ~pos ~pp_error error
   let or_raise ~pos ~pp_error result = or_raise ~pos ~pp_error result
+
+  module type S = sig
+    type error
+
+    val pp_error : Format.formatter -> error -> unit
+    val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> ('a, error Error.t) result -> unit
+    val fail : pos:Source.pos -> error -> ('a, error Error.t) result
+    val of_option : pos:Source.pos -> error -> 'a option -> ('a, error Error.t) result
+    val map_none : pos:Source.pos -> error:(unit -> error) -> 'a option -> ('a, error Error.t) result
+    val guard : pos:Source.pos -> error:error -> bool -> (unit, error Error.t) result
+    val map_error : pos:Source.pos -> ('e -> error) -> ('a, 'e Error.t) result -> ('a, error Error.t) result
+    val mark_error : pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
+    val protect : pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result
+    val import : pos:Source.pos -> ('e -> error) -> ('a, 'e) result -> ('a, error Error.t) result
+    val export : pos:Source.pos -> ('a, error Error.t) result -> ('a, error) result
+    val to_exn : pos:Source.pos -> error Error.t -> exn
+    val export_exn : pos:Source.pos -> ('a, error Error.t) result -> ('a, exn) result
+    val raise_error : pos:Source.pos -> error Error.t -> 'a
+    val or_raise : pos:Source.pos -> ('a, error Error.t) result -> 'a
+    val with_escape : (error Escape.t -> 'a) -> ('a, error Error.t) result
+    val throw : error Escape.t -> pos:Source.pos -> error -> 'a
+
+    module List : sig
+      val map2 :
+        pos:Source.pos ->
+        unequal_lengths:(int -> int -> error) ->
+        ('a -> 'b -> ('c, error Error.t) result) ->
+        'a list ->
+        'b list ->
+        ('c list, error Error.t) result
+
+      val iter2 :
+        pos:Source.pos ->
+        unequal_lengths:(int -> int -> error) ->
+        ('a -> 'b -> (unit, error Error.t) result) ->
+        'a list ->
+        'b list ->
+        (unit, error Error.t) result
+    end
+
+    module Error : sig
+      val make : pos:Source.pos -> error -> error Error.t
+      val map_kind : pos:Source.pos -> ('e -> error) -> 'e Error.t -> error Error.t
+      val pp : Format.formatter -> error Error.t -> unit
+      val pp_kind : Format.formatter -> error Error.t -> unit
+    end
+  end
+
+  module Make (D : Domain) : S with type error = D.error = struct
+    module B = Make (D)
+
+    type error = D.error
+
+    let pp_error = D.pp_error
+    let pp = B.pp
+    let fail ~pos kind = B.fail ~pos kind
+    let of_option ~pos kind option = B.of_option ~pos kind option
+    let map_none ~pos ~error option = B.map_none ~pos ~error option
+    let guard ~pos ~error condition = B.guard ~pos ~error condition
+    let map_error ~pos f result = B.map_error ~pos f result
+    let mark_error ~pos marking result = B.mark_error ~pos marking result
+    let protect ~pos ~catch f = B.protect ~pos ~catch f
+    let import ~pos f result = B.import ~pos f result
+    let export ~pos result = B.export ~pos result
+    let to_exn ~pos error = B.to_exn ~pos error
+    let export_exn ~pos result = B.export_exn ~pos result
+    let raise_error ~pos error = B.raise_error ~pos error
+    let or_raise ~pos result = B.or_raise ~pos result
+    let with_escape = B.with_escape
+    let throw token ~pos kind = B.throw token ~pos kind
+
+    module List = struct
+      let map2 ~pos ~unequal_lengths f left right = B.List.map2 ~pos ~unequal_lengths f left right
+      let iter2 ~pos ~unequal_lengths f left right = B.List.iter2 ~pos ~unequal_lengths f left right
+    end
+
+    module Error = struct
+      let make ~pos kind = B.Error.make ~pos kind
+      let map_kind ~pos f error = B.Error.map_kind ~pos f error
+      let pp = B.Error.pp
+      let pp_kind = B.Error.pp_kind
+    end
+  end
 end
