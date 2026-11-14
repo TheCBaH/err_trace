@@ -51,6 +51,19 @@ The library itself only depends on the OCaml standard library and supports OCaml
 4.12 and later. OCaml 4.12 is the lower bound because the implementation uses
 the standard library's `Atomic` module.
 
+## Binding results
+
+Open `Err.Syntax` for `let*`, `let+`, `>>=` and `>>|`, locally or for a whole
+module. Do not `open Err` itself: it defines `List`, `Error`, `map`, `fail` and
+other names that shadow the standard library's.
+
+```ocaml
+let doubled n =
+  let open Err.Syntax in
+  let* () = Err.guard ~pos:__POS__ ~error:`Not_positive (n > 0) in
+  Err.return (n * 2)
+```
+
 ## Trace policy
 
 Tracing is process configuration, not an environment-variable side effect.
