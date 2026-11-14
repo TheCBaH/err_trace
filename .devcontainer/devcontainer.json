@@ -18,7 +18,7 @@
             "optional-packages": "melange",
             "options": "ocaml-option-static",
             "system-packages": "musl-dev musl-tools",
-            "ocaml-version-overrides": "pp#1.2.0@4.12.* yojson#2.2.2@4.12.*"
+            "ocaml-version-overrides": "pp#1.2.0@4.12.* yojson#2.2.2@4.12.* dune#3.24.2@5.4.*"
         },
     },
     "customizations": {
