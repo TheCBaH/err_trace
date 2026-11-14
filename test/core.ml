@@ -1461,3 +1461,55 @@ let%expect_test "max_events is capped so the trail stays bounded" =
     | Error error -> ( match Error.kind error with `Limit_too_large _ -> true | _ -> false)
     | Ok _ -> false);
   [%expect {| true |}]
+
+let%expect_test "trail invariants hold across random operations and policy changes" =
+  let rng = Random.State.make [| 20261114 |] in
+  let actions =
+    [| Action.Detect; Action.Map; Action.Filter; Action.Catch; Action.Raise; Action.Import; Action.Export |]
+  in
+  let random_config () =
+    let selected = Stdlib.List.filter (fun _ -> Random.State.bool rng) (Array.to_list actions) in
+    make_config ~actions:(Action.Set.of_list selected) ~max_events:(Random.State.int rng 9) ()
+  in
+  let violations = ref 0 and checked = ref 0 in
+  let check ok =
+    incr checked;
+    if not ok then incr violations
+  in
+  let original = Config.get () in
+  Fun.protect
+    ~finally:(fun () -> Config.set original)
+    (fun () ->
+      for _ = 1 to 300 do
+        (* One error lives through a run of operations; the policy changes between them. *)
+        let config = ref (random_config ()) in
+        Config.set !config;
+        let current = ref (fail "start" |> get_error) in
+        let origin = Error.origin !current in
+        let enabled = ref (if Action.Set.mem Action.Detect (Config.actions !config) then 1 else 0) in
+        let last_max = ref (Config.max_events !config) in
+        for _ = 1 to 30 do
+          let before = !current in
+          (match Random.State.int rng 3 with
+          | 0 ->
+              config := random_config ();
+              Config.set !config;
+              check (!current == before)
+          | _ ->
+              let action = actions.(Random.State.int rng (Array.length actions)) in
+              let on = Action.Set.mem action (Config.actions !config) in
+              current := get_error (mark_error action (Error !current));
+              if on then begin
+                incr enabled;
+                last_max := Config.max_events !config
+              end
+              else check (!current == before));
+          let retained = Stdlib.List.length (Error.events !current) in
+          check (Error.origin !current == origin);
+          check (retained + Error.dropped_events !current = !enabled);
+          check (!enabled = 0 || retained <= !last_max)
+        done
+      done);
+  (* The number of checks depends on the Random algorithm of the compiler. *)
+  Printf.printf "many checks: %b, violations: %d\n" (!checked > 10_000) !violations;
+  [%expect {| many checks: true, violations: 0 |}]
