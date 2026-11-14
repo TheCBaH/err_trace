@@ -9,6 +9,10 @@ on:
       - 'v*'
   pull_request:
   workflow_dispatch:
+  schedule:
+    # The images install unpinned packages; a weekly run on the default
+    # branch notices upstream breakage between commits.
+    - cron: '17 4 * * 1'
 
 jobs:
   versions:
