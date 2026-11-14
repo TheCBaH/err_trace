@@ -328,6 +328,8 @@ module Monitor = struct
     actions : Action.Set.t;
     callback : Observation.t -> unit;
     on_error : exn -> Stack.t option -> unit;
+    on_failure : exn -> [ `Keep | `Remove ];
+    last_failure : (exn * Stack.t option) option Atomic.t;
   }
 
   type t = entry
@@ -336,8 +338,10 @@ module Monitor = struct
   (* In installation order, so dispatch needs no reversal. *)
   let registry : entry list Atomic.t = Atomic.make []
 
-  let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) callback =
-    let entry = { active = Atomic.make true; actions; callback; on_error } in
+  let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) ?(on_failure = fun _ -> `Remove) callback =
+    let entry =
+      { active = Atomic.make true; actions; callback; on_error; on_failure; last_failure = Atomic.make None }
+    in
     let rec add () =
       let previous = Atomic.get registry in
       if not (Atomic.compare_and_set registry previous (previous @ [ entry ])) then add ()
@@ -356,6 +360,7 @@ module Monitor = struct
       drop ();
       true
 
+  let last_failure entry = Atomic.get entry.last_failure
   let pp ppf entry = Format.pp_print_string ppf (if Atomic.get entry.active then "installed" else "removed")
   let pp_callback ppf _ = Format.pp_print_string ppf "<callback>"
 
@@ -385,7 +390,8 @@ module Monitor = struct
           try entry.callback observation
           with exn -> (
             let stack = callback_stack () in
-            ignore (remove entry);
+            Atomic.set entry.last_failure (Some (exn, stack));
+            if (try entry.on_failure exn with _ -> `Remove) = `Remove then ignore (remove entry);
             try entry.on_error exn stack with _ -> ()))
         entries
     end

@@ -1513,3 +1513,46 @@ let%expect_test "trail invariants hold across random operations and policy chang
   (* The number of checks depends on the Random algorithm of the compiler. *)
   Printf.printf "many checks: %b, violations: %d\n" (!checked > 10_000) !violations;
   [%expect {| many checks: true, violations: 0 |}]
+
+let%expect_test "a raising monitor is contained and its failure is recorded or kept by policy" =
+  with_config
+    (make_config ~actions:(Action.Set.of_list [ Action.Map ]) ())
+    (fun () ->
+      let calls = ref 0 in
+      let trigger () = ignore (mark_error Action.Map (fail "x" : (unit, string) t)) in
+      Stdlib.List.iter
+        (fun (name, exn) ->
+          let removed = Monitor.install (fun _ -> raise exn) in
+          trigger ();
+          let kept =
+            Monitor.install
+              ~on_failure:(fun _ -> `Keep)
+              (fun _ ->
+                incr calls;
+                raise exn)
+          in
+          trigger ();
+          trigger ();
+          print_endline
+            (Format.asprintf "%s: default=%a kept=%a calls=%d last=%b" name Monitor.pp removed Monitor.pp kept !calls
+               (Monitor.last_failure kept <> None));
+          calls := 0;
+          ignore (Monitor.remove kept))
+        [
+          ("Sys.Break", Sys.Break);
+          ("Stack_overflow", Stack_overflow);
+          ("Out_of_memory", Out_of_memory);
+          ("Failure", Failure "boom");
+        ];
+      let handle = Monitor.install (fun _ -> ()) in
+      trigger ();
+      print_bool (Monitor.last_failure handle = None);
+      ignore (Monitor.remove handle);
+      [%expect
+        {|
+        Sys.Break: default=removed kept=installed calls=2 last=true
+        Stack_overflow: default=removed kept=installed calls=2 last=true
+        Out_of_memory: default=removed kept=installed calls=2 last=true
+        Failure: default=removed kept=installed calls=2 last=true
+        true
+        |}])

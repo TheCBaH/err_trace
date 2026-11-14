@@ -338,9 +338,24 @@ module Monitor : sig
   (** A synchronous callback invoked for each matching enabled event. Callbacks must be short, non-blocking, and must
       not produce further [Err] events. *)
 
-  val install : ?actions:Action.Set.t -> ?on_error:(exn -> Stack.t option -> unit) -> callback -> t
-  (** Install [callback] in installation order. [actions] defaults to every action. A callback that raises is removed;
-      [on_error] then receives its exception and a stack when the active policy captured one. *)
+  val install :
+    ?actions:Action.Set.t ->
+    ?on_error:(exn -> Stack.t option -> unit) ->
+    ?on_failure:(exn -> [ `Keep | `Remove ]) ->
+    callback ->
+    t
+  (** Install [callback] in installation order. [actions] defaults to every action.
+
+      A monitor must not break the code it observes, so an exception raised by [callback] is contained: it never reaches
+      the code that produced the event, and that includes [Sys.Break], [Out_of_memory] and [Stack_overflow], which a
+      monitor in the middle of a [Stack_overflow] cannot meaningfully recover from either. The failure is recorded on
+      the handle ({!last_failure}) and passed to [on_failure], which answers [`Remove] (the default) to uninstall the
+      monitor or [`Keep] to leave it installed. [on_error] then receives the exception and a stack when the active
+      policy captured one. A handler that itself raises counts as [`Remove] and is otherwise ignored. *)
+
+  val last_failure : t -> (exn * Stack.t option) option
+  (** The exception, and the stack when the active policy captured one, of the most recent time this monitor's callback
+      raised; [None] if it never has. *)
 
   val remove : t -> bool
   (** Idempotently remove a monitor. It returns [true] only for the call that changes an installed monitor to removed.
