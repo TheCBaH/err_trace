@@ -297,7 +297,7 @@ module Error = struct
         }
       in
       let printer = match pp_error with None -> None | Some pp_error -> Some (fun ppf -> pp pp_error ppf error) in
-      !event_dispatch event error.origin (events error) error.dropped_events printer;
+      !event_dispatch event error.origin error.events_rev error.dropped_events printer;
       error
 
   let make ?pos ?pp_error kind =
@@ -581,9 +581,9 @@ end
 
 let () =
   event_dispatch :=
-    fun event error_origin retained_events dropped_events printer ->
+    fun event error_origin events_rev dropped_events printer ->
       Monitor.dispatch (Event.action event) (fun () ->
-          { Observation.event; error_origin; retained_events; dropped_events; printer })
+          { Observation.event; error_origin; retained_events = List.rev events_rev; dropped_events; printer })
 
 let pp pp_value pp_error ppf = function
   | Ok value -> Format.fprintf ppf "@[<hov 2>Ok@ (%a)@]" pp_value value
