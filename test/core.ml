@@ -1556,3 +1556,51 @@ let%expect_test "a raising monitor is contained and its failure is recorded or k
         Failure: default=removed kept=installed calls=2 last=true
         true
         |}])
+
+let%expect_test "observations say whether their event created the error" =
+  let collect config run =
+    with_config config (fun () ->
+        let seen = ref [] in
+        let handle =
+          Monitor.install (fun observation ->
+              let action = Format.asprintf "%a" Action.pp (Event.action (Observation.event observation)) in
+              seen := Printf.sprintf "%s:%b" action (Observation.is_creation observation) :: !seen)
+        in
+        Fun.protect ~finally:(fun () -> ignore (Monitor.remove handle)) (fun () -> run ());
+        String.concat " " (Stdlib.List.rev !seen))
+  in
+  let all = make_config ~actions:Action.Set.all () in
+  print_endline (collect all (fun () -> ignore (fail "x" : (unit, string) t)));
+  print_endline (collect all (fun () -> ignore (guard ~error:"x" false)));
+  print_endline (collect all (fun () -> ignore (import Fun.id (Error "x" : (unit, string) result))));
+  print_endline (collect all (fun () -> ignore (protect ~catch:(fun _ -> Some "x") (fun () -> failwith "boom"))));
+  print_endline
+    (collect all (fun () -> ignore (mark_error Action.Raise (map_error Fun.id (fail "x" : (unit, string) t)))));
+  print_endline
+    (collect
+       (make_config ~actions:(Action.Set.of_list [ Action.Map ]) ())
+       (fun () -> ignore (map_error Fun.id (fail "x" : (unit, string) t))));
+  print_endline
+    (collect (make_config ~actions:Action.Set.all ~max_events:0 ()) (fun () ->
+         ignore (map_error Fun.id (fail "x" : (unit, string) t))));
+  print_endline (collect all (fun () -> ignore (Accum.map (fun v -> (fail v : (unit, string) t)) [ "a"; "b" ])));
+  (* A policy change between creation and the first enabled event. *)
+  print_endline
+    (collect
+       (make_config ~actions:(Action.Set.of_list [ Action.Raise ]) ())
+       (fun () ->
+         let failure : (unit, string) t = fail "x" in
+         Config.set (make_config ~actions:Action.Set.all ());
+         ignore (map_error Fun.id failure)));
+  [%expect
+    {|
+    detect:true
+    filter:true
+    import:true
+    catch:true
+    detect:true map:false raise:false
+    map:false
+    detect:true map:false
+    detect:true detect:true
+    map:false
+    |}]

@@ -322,6 +322,12 @@ module Observation : sig
   val dropped_events : t -> int
   (** Return the snapshot's dropped-event count. *)
 
+  val is_creation : t -> bool
+  (** Whether this event is the one that created the error: [Detect] from {!Err.fail} and the other constructors,
+      [Filter] from {!Err.guard}, [Import] from {!Err.import}, and [Catch] from {!Err.protect}. It does not depend on
+      what the policy retains, so it stays [true] with [max_events = 0] and [false] for a later event on an error whose
+      own creation event was disabled. An {!Err.Accum} batch wrapper is not a creation: each element failure is. *)
+
   val pp : Format.formatter -> t -> unit
   (** Print the complete error only when the producing boundary supplied a payload printer; otherwise print event
       metadata. *)
