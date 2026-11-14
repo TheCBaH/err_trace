@@ -511,7 +511,8 @@ module type Domain = sig
 end
 
 (** The operations of {!Err} that take a printer, with that printer already supplied. Everything else -- {!return},
-    {!bind}, {!map}, {!payload}, {!Syntax}, {!List}, {!Accum} -- needs no printer and stays in {!Err}.
+    {!bind}, {!map}, {!payload}, {!Syntax}, {!Accum}, and the {!List} traversals other than {!List.map2} and
+    {!List.iter2} -- needs no printer and stays in {!Err}.
 
     Use the result qualified, as [E.fail] and [E.Error.make]. Including it in a module shadows {!Err.Error} for the rest
     of that module; the [Error] constructor of [Stdlib.result] is unaffected. *)
@@ -570,6 +571,27 @@ module type S = sig
 
   val throw : error Escape.t -> ?pos:Source.pos -> error -> 'a
   (** {!Err.Escape.throw} with the domain printer supplied. *)
+
+  (** The {!Err.List} traversals that can detect a failure of their own and so take a printer. *)
+  module List : sig
+    val map2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> ('c, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      ('c list, error Error.t) result
+    (** {!Err.List.map2} with the domain printer supplied. *)
+
+    val iter2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> (unit, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      (unit, error Error.t) result
+    (** {!Err.List.iter2} with the domain printer supplied. *)
+  end
 
   (** The {!Err.Error} operations that take a printer. *)
   module Error : sig

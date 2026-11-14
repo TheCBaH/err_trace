@@ -818,51 +818,30 @@ module type S = sig
   val with_escape : (error Escape.t -> 'a) -> ('a, error Error.t) result
   val throw : error Escape.t -> ?pos:Source.pos -> error -> 'a
 
+  module List : sig
+    val map2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> ('c, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      ('c list, error Error.t) result
+
+    val iter2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> (unit, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      (unit, error Error.t) result
+  end
+
   module Error : sig
     val make : ?pos:Source.pos -> error -> error Error.t
     val map_kind : ?pos:Source.pos -> ('e -> error) -> 'e Error.t -> error Error.t
     val pp : Format.formatter -> error Error.t -> unit
     val pp_kind : Format.formatter -> error Error.t -> unit
   end
-end
-
-(* Every operation here is its unbound counterpart with [D.pp_error] supplied, so
-   values built through the functor and values built directly are the same
-   values. Only operations that take a printer appear; the rest stay in [Err]. *)
-module Make (D : Domain) : S with type error = D.error = struct
-  type error = D.error
-
-  let pp_error = D.pp_error
-  let pp pp_value ppf result = pp pp_value D.pp_error ppf result
-  let fail ?pos kind = fail ?pos ~pp_error:D.pp_error kind
-  let of_option ?pos kind option = of_option ?pos ~pp_error:D.pp_error kind option
-  let map_none ?pos ~error option = map_none ?pos ~pp_error:D.pp_error ~error option
-  let guard ?pos ~error condition = guard ?pos ~pp_error:D.pp_error ~error condition
-  let map_error ?pos f result = map_error ?pos ~pp_error:D.pp_error f result
-  let mark_error ?pos action result = mark_error ?pos ~pp_error:D.pp_error action result
-  let protect ?pos ~catch f = protect ?pos ~pp_error:D.pp_error ~catch f
-  let import ?pos f result = import ?pos ~pp_error:D.pp_error f result
-  let export ?pos result = export ?pos ~pp_error:D.pp_error result
-  let to_exn ?pos error = to_exn ?pos ~pp_error:D.pp_error error
-  let export_exn ?pos result = export_exn ?pos ~pp_error:D.pp_error result
-  let raise_error ?pos error = raise_error ?pos ~pp_error:D.pp_error error
-  let or_raise ?pos result = or_raise ?pos ~pp_error:D.pp_error result
-  let with_escape f = Escape.with_escape f
-  let throw token ?pos kind = Escape.throw token ?pos ~pp_error:D.pp_error kind
-
-  module Error = struct
-    let make ?pos kind = Error.make ?pos ~pp_error:D.pp_error kind
-    let map_kind ?pos f error = Error.map_kind ?pos ~pp_error:D.pp_error f error
-    let pp ppf error = Error.pp D.pp_error ppf error
-    let pp_kind ppf error = Error.pp_kind D.pp_error ppf error
-  end
-end
-
-module Syntax = struct
-  let ( let* ) = bind
-  let ( let+ ) result f = map f result
-  let ( >>= ) = bind
-  let ( >>| ) result f = map f result
 end
 
 module List = struct
@@ -948,6 +927,50 @@ module List = struct
           match f value with Ok true -> loop values | Ok false -> Ok false | Error error -> Error error)
     in
     loop values
+end
+
+(* Every operation here is its unbound counterpart with [D.pp_error] supplied, so
+   values built through the functor and values built directly are the same
+   values. Only operations that take a printer appear; the rest stay in [Err]. *)
+module Make (D : Domain) : S with type error = D.error = struct
+  type error = D.error
+
+  let pp_error = D.pp_error
+  let pp pp_value ppf result = pp pp_value D.pp_error ppf result
+  let fail ?pos kind = fail ?pos ~pp_error:D.pp_error kind
+  let of_option ?pos kind option = of_option ?pos ~pp_error:D.pp_error kind option
+  let map_none ?pos ~error option = map_none ?pos ~pp_error:D.pp_error ~error option
+  let guard ?pos ~error condition = guard ?pos ~pp_error:D.pp_error ~error condition
+  let map_error ?pos f result = map_error ?pos ~pp_error:D.pp_error f result
+  let mark_error ?pos action result = mark_error ?pos ~pp_error:D.pp_error action result
+  let protect ?pos ~catch f = protect ?pos ~pp_error:D.pp_error ~catch f
+  let import ?pos f result = import ?pos ~pp_error:D.pp_error f result
+  let export ?pos result = export ?pos ~pp_error:D.pp_error result
+  let to_exn ?pos error = to_exn ?pos ~pp_error:D.pp_error error
+  let export_exn ?pos result = export_exn ?pos ~pp_error:D.pp_error result
+  let raise_error ?pos error = raise_error ?pos ~pp_error:D.pp_error error
+  let or_raise ?pos result = or_raise ?pos ~pp_error:D.pp_error result
+  let with_escape f = Escape.with_escape f
+  let throw token ?pos kind = Escape.throw token ?pos ~pp_error:D.pp_error kind
+
+  module Error = struct
+    let make ?pos kind = Error.make ?pos ~pp_error:D.pp_error kind
+    let map_kind ?pos f error = Error.map_kind ?pos ~pp_error:D.pp_error f error
+    let pp ppf error = Error.pp D.pp_error ppf error
+    let pp_kind ppf error = Error.pp_kind D.pp_error ppf error
+  end
+
+  module List = struct
+    let map2 ?pos ~unequal_lengths f left right = List.map2 ?pos ~pp_error:D.pp_error ~unequal_lengths f left right
+    let iter2 ?pos ~unequal_lengths f left right = List.iter2 ?pos ~pp_error:D.pp_error ~unequal_lengths f left right
+  end
+end
+
+module Syntax = struct
+  let ( let* ) = bind
+  let ( let+ ) result f = map f result
+  let ( >>= ) = bind
+  let ( >>| ) result f = map f result
 end
 
 module Accum = struct

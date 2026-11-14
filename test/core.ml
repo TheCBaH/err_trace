@@ -1347,3 +1347,27 @@ let%expect_test "native stacks render from slots without runtime wording" =
     true
     true
     |}]
+
+let%expect_test "a bound domain offers the length-checked list traversals" =
+  with_config (make_config ()) (fun () ->
+      let unequal left right = `Missing_item ((left * 10) + right) in
+      let show = function
+        | Ok values -> String.concat "," (Stdlib.List.map string_of_int values)
+        | Error error -> Format.asprintf "%a" Bound.Error.pp error
+      in
+      print_endline (show (Bound.List.map2 ~unequal_lengths:unequal (fun a b -> Ok (a + b)) [ 1; 2 ] [ 10; 20 ]));
+      print_endline (show (Bound.List.map2 ~unequal_lengths:unequal (fun a b -> Ok (a + b)) [ 1; 2 ] [ 10 ]));
+      print_endline
+        (match Bound.List.iter2 ~unequal_lengths:unequal (fun _ _ -> Ok ()) [ 1 ] [] with
+        | Ok () -> "ok"
+        | Error error -> Format.asprintf "%a" Bound.Error.pp error);
+      [%expect
+        {|
+        11,22
+        storage item 21 is missing
+        trace:
+          detected
+        storage item 10 is missing
+        trace:
+          detected
+        |}])
