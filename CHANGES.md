@@ -47,7 +47,9 @@
 
 ### Added
 
-- `Accum.Syntax` (`let+`, `and+`); `Observation.is_creation`; `Monitor.install ?on_failure` and
+- `Err.Located`, the operations that take `?pos` with `~pos` mandatory, and
+  `Err.Stats.unlocated`, a count of events recorded without a position;
+  `Accum.Syntax` (`let+`, `and+`); `Observation.is_creation`; `Monitor.install ?on_failure` and
   `Monitor.last_failure`; `Action.Set.add`, `remove`, `union`, `to_list`,
   `equal`; `Source.to_pos`; `Stack.to_external`; `Exn.origin`, `events`,
   `dropped_events`; `?pos` on `Escape.throw_error` and `or_throw`;

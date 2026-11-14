@@ -797,3 +797,58 @@ module Accum : sig
       remains available to the combiner. The empty case is supported for manually constructed batch errors and retains
       that batch wrapper's provenance. No [Map] event is recorded. *)
 end
+
+(** {1 Positions} *)
+
+module Stats : sig
+  val unlocated : unit -> int
+  (** How many events this process recorded without a source position, because the call omitted [?pos]. An event the
+      policy disabled is not counted. Compare it before and after a piece of work to find call sites that still lack
+      [~pos:__POS__], or use {!Located} to make the position mandatory. *)
+
+  val reset_unlocated : unit -> unit
+  (** Set the counter back to zero. *)
+end
+
+(** The operations of {!Err} that take [?pos], with the position mandatory. Each is the unlocated operation with [~pos]
+    required, so omitting it is a type error instead of a silent loss of provenance. Use the result qualified or behind
+    a local alias:
+
+    {[
+      module E = Err.Located
+
+      let find id = E.of_option ~pos:__POS__ (`Missing id) (lookup id)
+    ]} *)
+module Located : sig
+  val fail : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> ('a, 'e) t
+  val of_option : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> 'a option -> ('a, 'e) t
+
+  val map_none :
+    pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> error:(unit -> 'e) -> 'a option -> ('a, 'e) t
+
+  val guard : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> error:'e -> bool -> (unit, 'e) t
+  val map_error : pos:Source.pos -> ?pp_error:(Format.formatter -> 'f -> unit) -> ('e -> 'f) -> ('a, 'e) t -> ('a, 'f) t
+
+  val mark_error :
+    pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> Action.marking -> ('a, 'e) t -> ('a, 'e) t
+
+  val import :
+    pos:Source.pos -> ?pp_error:(Format.formatter -> 'f -> unit) -> ('e -> 'f) -> ('a, 'e) Stdlib.result -> ('a, 'f) t
+
+  val export : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> ('a, 'e) Stdlib.result
+
+  val protect :
+    pos:Source.pos ->
+    ?pp_error:(Format.formatter -> 'e -> unit) ->
+    catch:(exn -> 'e option) ->
+    (unit -> 'a) ->
+    ('a, 'e) t
+
+  val throw : 'e Escape.t -> pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> 'a
+  val throw_error : pos:Source.pos -> 'e Escape.t -> 'e Error.t -> 'a
+  val or_throw : pos:Source.pos -> 'e Escape.t -> ('a, 'e Error.t) result -> 'a
+  val to_exn : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> 'e Error.t -> exn
+  val export_exn : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> ('a, exn) result
+  val raise_error : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> 'e Error.t -> 'a
+  val or_raise : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> 'a
+end

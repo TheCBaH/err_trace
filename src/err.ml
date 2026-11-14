@@ -402,6 +402,13 @@ module Monitor = struct
     end
 end
 
+module Stats = struct
+  let unlocated_events = Atomic.make 0
+  let unlocated () = Atomic.get unlocated_events
+  let reset_unlocated () = Atomic.set unlocated_events 0
+  let record_unlocated () = Atomic.incr unlocated_events
+end
+
 module Error = struct
   type +'e t = {
     kind : 'e;
@@ -457,6 +464,7 @@ module Error = struct
     if not (Action.Set.mem action config.actions) then error
     else
       let source = Option.map Source.of_pos pos in
+      if source = None then Stats.record_unlocated ();
       let event = { Event.action; origin = capture config ?source `Event } in
       let candidate_count = error.event_count + 1 in
       let retained_count = min config.max_events candidate_count in
@@ -1074,4 +1082,23 @@ module Accum = struct
         match Error.kind batch with
         | first :: _ as errors -> Error (Error.map_kind_untraced (fun _ -> combine errors) first)
         | [] -> Error (Error.map_kind_untraced combine batch))
+end
+
+module Located = struct
+  let fail ~pos ?pp_error kind = fail ~pos ?pp_error kind
+  let of_option ~pos ?pp_error error option = of_option ~pos ?pp_error error option
+  let map_none ~pos ?pp_error ~error option = map_none ~pos ?pp_error ~error option
+  let guard ~pos ?pp_error ~error condition = guard ~pos ?pp_error ~error condition
+  let map_error ~pos ?pp_error f result = map_error ~pos ?pp_error f result
+  let mark_error ~pos ?pp_error marking result = mark_error ~pos ?pp_error marking result
+  let import ~pos ?pp_error f result = import ~pos ?pp_error f result
+  let export ~pos ?pp_error result = export ~pos ?pp_error result
+  let protect ~pos ?pp_error ~catch f = protect ~pos ?pp_error ~catch f
+  let throw token ~pos ?pp_error kind = Escape.throw token ~pos ?pp_error kind
+  let throw_error ~pos token error = Escape.throw_error ~pos token error
+  let or_throw ~pos token result = Escape.or_throw ~pos token result
+  let to_exn ~pos ~pp_error error = to_exn ~pos ~pp_error error
+  let export_exn ~pos ~pp_error result = export_exn ~pos ~pp_error result
+  let raise_error ~pos ~pp_error error = raise_error ~pos ~pp_error error
+  let or_raise ~pos ~pp_error result = or_raise ~pos ~pp_error result
 end

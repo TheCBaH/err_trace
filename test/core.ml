@@ -1700,3 +1700,31 @@ let%expect_test "a policy that captures zero frames is stored as no backtrace" =
     off
     off
     |}]
+
+let%expect_test "the unlocated counter finds calls that omit the position" =
+  with_config (make_config ~actions:Action.Set.all ()) (fun () ->
+      Stats.reset_unlocated ();
+      let failure : (unit, string) t = fail "no position" in
+      ignore (map_error Fun.id failure);
+      Printf.printf "after two unlocated events: %d\n" (Stats.unlocated ());
+      ignore (fail ~pos:__POS__ "located" : (unit, string) t);
+      ignore (Located.map_error ~pos:__POS__ Fun.id failure);
+      ignore (Located.fail ~pos:__POS__ "also located" : (unit, string) t);
+      Printf.printf "after located events: %d\n" (Stats.unlocated ());
+      with_config Config.fast (fun () -> ignore (fail "disabled" : (unit, string) t));
+      Printf.printf "after a disabled event: %d\n" (Stats.unlocated ());
+      Stats.reset_unlocated ();
+      Printf.printf "after reset: %d\n" (Stats.unlocated ());
+      let located = Located.fail ~pos:("located.ml", 7, 2, 9) "boom" |> get_error in
+      print_endline
+        (match Option.bind (Error.origin located) Origin.source with
+        | Some source -> Format.asprintf "%a" Source.pp source
+        | None -> "no source");
+      [%expect
+        {|
+        after two unlocated events: 2
+        after located events: 2
+        after a disabled event: 2
+        after reset: 0
+        located.ml:7:2-9
+        |}])
