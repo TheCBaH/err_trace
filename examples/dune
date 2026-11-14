@@ -1,7 +1,18 @@
 (executable
  (name poly_errors)
- (modes byte exe js)
+ (modes byte exe)
  (libraries err_trace))
+
+(subdir
+ js
+ (copy_files#
+  (files ../poly_errors.ml))
+ (executable
+  (name poly_errors)
+  (modes js)
+  (enabled_if
+   (= %{env:ERR_TRACE_TEST_JS=false} "true"))
+  (libraries err_trace)))
 
 (subdir
  melange

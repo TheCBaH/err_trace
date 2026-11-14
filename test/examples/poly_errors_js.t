@@ -1,4 +1,4 @@
-  $ node ../../examples/poly_errors.bc.js
+  $ node ../../examples/js/poly_errors.bc.js
   [monitor] detect
   users record 42 is missing
   detected at:

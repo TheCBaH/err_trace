@@ -6,7 +6,7 @@
  (applies_to poly_errors_js)
  (enabled_if
   (= %{env:ERR_TRACE_TEST_JS=false} "true"))
- (deps ../../examples/poly_errors.bc.js))
+ (deps ../../examples/js/poly_errors.bc.js))
 
 (subdir
  melange
