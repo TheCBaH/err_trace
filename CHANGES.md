@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased (after 0.1.0)
+## Unreleased (0.2.0~dev, after 0.1.0)
 
 ### Breaking
 
