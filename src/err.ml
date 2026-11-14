@@ -164,19 +164,53 @@ module Stack = struct
         Format.pp_print_string ppf line;
         List.iter (fun line -> Format.fprintf ppf "@,%s" line) lines
 
+  (* Built from slots, not [raw_backtrace_to_string]: that text starts with
+     "Raised by primitive operation" for a call stack that raised nothing, ends
+     in a newline, and its first frames are this library's own. *)
+  let slot_line slot =
+    let location =
+      Option.map
+        (fun (location : Printexc.location) ->
+          Format.asprintf "%a" Source.pp
+            {
+              Source.file = location.filename;
+              line = location.line_number;
+              start_column = location.start_char;
+              end_column = location.end_char;
+            })
+        (Printexc.Slot.location slot)
+    in
+    match (location, Printexc.Slot.name slot) with
+    | Some location, Some name -> Some (location ^ " " ^ name)
+    | Some location, None -> Some location
+    | None, Some name -> Some (name ^ " (unknown location)")
+    | None, None -> None
+
+  let is_own_frame slot =
+    match Printexc.Slot.name slot with
+    | Some name -> String.length name >= 4 && String.sub name 0 4 = "Err."
+    | None -> false
+
+  let rec drop_own_frames = function slot :: slots when is_own_frame slot -> drop_own_frames slots | slots -> slots
+  let slot_lines slots = List.filter_map slot_line (drop_own_frames (Array.to_list slots))
+
+  let pp_slots ppf slots =
+    match slot_lines slots with
+    | [] -> Format.pp_print_string ppf "stack unavailable"
+    | line :: lines ->
+        Format.pp_print_string ppf line;
+        List.iter (fun line -> Format.fprintf ppf "@,%s" line) lines
+
   let pp ppf stack =
     Format.fprintf ppf "@[<v>";
     (match stack with
     | Raw backtrace when not (raw_is_available backtrace) -> Format.pp_print_string ppf "stack unavailable"
-    | Raw backtrace -> pp_lines ppf (Printexc.raw_backtrace_to_string backtrace)
-    | Slots slots when Array.length slots = 0 -> Format.pp_print_string ppf "stack unavailable"
-    | Slots slots ->
-        Array.iteri
-          (fun index slot ->
-            if index > 0 then Format.pp_print_cut ppf ();
-            Format.pp_print_string ppf (Option.value (Printexc.Slot.format index slot) ~default:"unknown location"))
-          slots;
-        Format.fprintf ppf "@,[truncated]"
+    | Raw backtrace -> (
+        match Printexc.backtrace_slots backtrace with
+        | Some slots -> pp_slots ppf slots
+        | None -> Format.pp_print_string ppf "stack unavailable")
+    | Slots slots when slot_lines slots = [] -> Format.pp_print_string ppf "stack unavailable"
+    | Slots slots -> Format.fprintf ppf "%a@,[truncated]" pp_slots slots
     | External { stack = ""; _ } -> Format.pp_print_string ppf "stack unavailable"
     | External { runtime; stack; truncated } ->
         Format.fprintf ppf "%s stack:@,%a" runtime pp_lines stack;

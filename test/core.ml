@@ -1315,3 +1315,35 @@ let%expect_test "protect retains at most max_frames of the caught stack" =
       | exception Failure _ -> print_bool (Printexc.raw_backtrace_length (Printexc.get_raw_backtrace ()) >= full_frames)
       | _ -> print_endline "not raised");
   [%expect {| true |}]
+
+let%expect_test "native stacks render from slots without runtime wording" =
+  Printexc.record_backtrace true;
+  let has_prefix prefix line =
+    String.length line >= String.length prefix && String.sub line 0 (String.length prefix) = prefix
+  in
+  let mentions_err_ml line =
+    let needle = "err.ml" in
+    let rec from index =
+      index + String.length needle <= String.length line
+      && (String.sub line index (String.length needle) = needle || from (index + 1))
+    in
+    from 0
+  in
+  with_config (make_config ~backtrace:Config.Origin ~max_frames:32 ()) (fun () ->
+      let error = get_error (fail "no position") in
+      match Option.bind (Error.origin error) Origin.stack with
+      | None -> print_endline "no stack"
+      | Some stack ->
+          let lines = String.split_on_char '\n' (Format.asprintf "%a" Stack.pp stack) in
+          (* Without frames on this runtime the whole text is "stack unavailable". *)
+          let available = Stack.is_available stack in
+          print_bool ((not available) || not (Stdlib.List.mem "" lines));
+          print_bool
+            ((not available)
+            || not (Stdlib.List.exists (fun line -> has_prefix "Raised" line || has_prefix "Called" line) lines));
+          print_bool ((not available) || not (mentions_err_ml (Stdlib.List.hd lines))));
+  [%expect {|
+    true
+    true
+    true
+    |}]

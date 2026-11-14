@@ -1538,7 +1538,9 @@ stable. The cases are:
 Native stack text never appears in a golden. Frame names, inlining, paths, and
 JavaScript engine formatting are not stable, so provenance tests assert
 structural properties (`Origin.source`/`Origin.stack` presence, event names,
-counts) and printer tests assert only the library's own framing.
+counts) and printer tests assert only the library's own framing. Rendered native
+stack text is checked by properties only: no empty line, no `Raised`/`Called`
+runtime wording, and a first frame outside `err.ml`.
 
 ### Format composition tests
 
