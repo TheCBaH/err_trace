@@ -1618,3 +1618,12 @@ let%expect_test "the start-up policy keeps the trail and captures no stacks" =
     true
     true
     |}]
+
+let%expect_test "dropped events are reported as not retained" =
+  with_config (make_config ~actions:Action.Set.all ~max_events:0 ()) (fun () ->
+      let error = get_error (mark_error Action.Raise (map_error Fun.id (fail "x" : (unit, string) t))) in
+      print_endline (Format.asprintf "%a" (Error.pp Format.pp_print_string) error);
+      [%expect {|
+        x
+        3 trace events not retained
+        |}])

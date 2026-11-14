@@ -319,7 +319,7 @@ module Observation = struct
         | [] -> ()
         | events -> Format.fprintf ppf "@,retained trace:@,  @[<v>%a@]" Event.pp_events events);
         if observation.dropped_events <> 0 then
-          Format.fprintf ppf "@,%d older trace event%s omitted" observation.dropped_events
+          Format.fprintf ppf "@,%d trace event%s not retained" observation.dropped_events
             (if observation.dropped_events = 1 then "" else "s");
         Format.fprintf ppf "@]"
 end
@@ -433,7 +433,7 @@ module Error = struct
     | Some origin -> Format.fprintf ppf "@,detected at:@,  @[<v>%a@]" Origin.pp origin);
     (match events error with [] -> () | events -> Format.fprintf ppf "@,trace:@,  @[<v>%a@]" pp_events events);
     if error.dropped_events <> 0 then
-      Format.fprintf ppf "@,%d older trace event%s omitted" error.dropped_events
+      Format.fprintf ppf "@,%d trace event%s not retained" error.dropped_events
         (if error.dropped_events = 1 then "" else "s");
     Format.fprintf ppf "@]"
 

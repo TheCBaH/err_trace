@@ -1035,7 +1035,7 @@ trace:
   mapped at decode.ml:88:2-54
   exported at cli.ml:17:4-31
   raised at command.ml:52:6-40
-2 older trace events omitted
+2 trace events not retained
 ```
 
 If origin or events are absent, their sections are omitted. If stack capture was
