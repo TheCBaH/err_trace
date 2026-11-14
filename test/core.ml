@@ -1371,3 +1371,45 @@ let%expect_test "a bound domain offers the length-checked list traversals" =
         trace:
           detected
         |}])
+
+let%expect_test "every action set, backtrace mode and limit round-trips through of_strings" =
+  let all = [ Action.Detect; Action.Map; Action.Filter; Action.Catch; Action.Raise; Action.Import; Action.Export ] in
+  let checked = ref 0 and mismatched = ref 0 in
+  for mask = 0 to 127 do
+    let actions = Action.Set.of_list (Stdlib.List.filteri (fun index _ -> mask land (1 lsl index) <> 0) all) in
+    Stdlib.List.iter
+      (fun backtrace ->
+        Stdlib.List.iter
+          (fun limit ->
+            let config =
+              make_config ~actions ~backtrace ~max_events:limit ~max_frames:(limit / 2) ~max_external_bytes:(limit + 1)
+                ()
+            in
+            let text = Format.asprintf "%a" Config.pp config in
+            let reparsed =
+              Config.of_strings
+                ~trace:(Some (Format.asprintf "%a" Action.Set.pp actions))
+                ~backtrace:(Some (Format.asprintf "%a" Config.pp_backtrace backtrace))
+                ~max_events:(Some (string_of_int limit))
+                ~max_frames:(Some (string_of_int (limit / 2)))
+                ~max_external_bytes:(Some (string_of_int (limit + 1)))
+            in
+            incr checked;
+            match reparsed with
+            | Ok parsed when Format.asprintf "%a" Config.pp parsed = text -> ()
+            | Ok _ | Error _ -> incr mismatched)
+          [ 0; 1; 4096; max_int / 4 land 0x3fff_fffe ])
+      [ Config.Never; Config.Origin; Config.Events ]
+  done;
+  Printf.printf "%d checked, %d mismatched\n" !checked !mismatched;
+  [%expect {| 1536 checked, 0 mismatched |}]
+
+let%expect_test "a disabled action still maps the payload but changes nothing else" =
+  with_config Config.fast (fun () ->
+      let failure : (unit, string) t = fail "abc" in
+      (match map_error String.length failure with
+      | Error error -> Printf.printf "%d [%s]\n" (Error.kind error) (action_names error)
+      | Ok () -> print_endline "ok");
+      [%expect {| 3 [] |}];
+      print_bool (get_error (mark_error Action.Map failure) == get_error failure);
+      [%expect {| true |}])
