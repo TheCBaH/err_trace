@@ -1251,3 +1251,26 @@ let%expect_test "action sets can be edited and listed" =
   [%expect {|
     true
     false |}]
+
+let%expect_test "throw_error and or_throw locate a throw after the frame returned" =
+  with_config (make_config ()) (fun () ->
+      let leaked = ref None in
+      let _ : (unit, [ `Gone ]) t = Escape.with_escape (fun token -> leaked := Some token) in
+      let token = Option.get !leaked in
+      let failure : (unit, [ `Gone ]) t = fail `Gone in
+      let located raise_it =
+        try
+          raise_it ();
+          "no raise"
+        with
+        | Escape.Escaped_after_exit (Some source) -> Format.asprintf "%a" Source.pp source
+        | Escape.Escaped_after_exit None -> "none"
+      in
+      print_endline (located (fun () -> Escape.throw_error ~pos:("after.ml", 3, 1, 5) token (get_error failure)));
+      print_endline (located (fun () -> Escape.or_throw ~pos:("after.ml", 4, 1, 5) token failure));
+      print_endline (located (fun () -> Escape.or_throw token failure));
+      [%expect {|
+        after.ml:3:1-5
+        after.ml:4:1-5
+        none
+        |}])

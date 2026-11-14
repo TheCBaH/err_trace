@@ -432,10 +432,11 @@ module Escape : sig
   (** Detect a failure and exit to its {!with_escape} frame. Records [Detect] under the active policy: the throw is the
       detection site. *)
 
-  val throw_error : 'e t -> 'e Error.t -> 'a
-  (** Exit with an already-constructed wrapper, adding no event and preserving its origin. *)
+  val throw_error : ?pos:Source.pos -> 'e t -> 'e Error.t -> 'a
+  (** Exit with an already-constructed wrapper, adding no event and preserving its origin. [pos] only locates the call
+      in {!Escaped_after_exit} when the token's frame has already returned. *)
 
-  val or_throw : 'e t -> ('a, 'e Error.t) result -> 'a
+  val or_throw : ?pos:Source.pos -> 'e t -> ('a, 'e Error.t) result -> 'a
   (** Return the value, or exit with the existing wrapper. Its argument type is [('a, 'e) Err.t]: this is the bridge
       that lets a recursive walk call ordinary result-returning functions without threading results through its own
       arms. *)

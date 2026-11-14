@@ -683,13 +683,14 @@ module Escape = struct
         token.live := false;
         reraise exn raw_backtrace
 
-  let throw_error token error = if !(token.live) then raise (token.make_exn error) else raise (Escaped_after_exit None)
+  let throw_error ?pos token error =
+    if !(token.live) then raise (token.make_exn error) else raise (Escaped_after_exit (Option.map Source.of_pos pos))
 
   let throw token ?pos ?pp_error kind =
     if not !(token.live) then raise (Escaped_after_exit (Option.map Source.of_pos pos));
     raise (token.make_exn (Error.make ?pos ?pp_error kind))
 
-  let or_throw token = function Ok value -> value | Error error -> throw_error token error
+  let or_throw ?pos token = function Ok value -> value | Error error -> throw_error ?pos token error
   let map f token = { live = token.live; make_exn = (fun error -> token.make_exn (Error.map_kind_untraced f error)) }
 
   let printer = function
