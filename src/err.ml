@@ -279,9 +279,107 @@ module Event = struct
     Format.fprintf ppf "@[<v>%a" pp_action event.action;
     (match event.origin with None -> () | Some origin -> Format.fprintf ppf " at %a" Origin.pp origin);
     Format.fprintf ppf "@]"
+
+  let pp_events ppf = function
+    | [] -> ()
+    | event :: events ->
+        pp ppf event;
+        List.iter (fun event -> Format.fprintf ppf "@,%a" pp event) events
 end
 
-let event_dispatch = ref (fun _ _ _ _ _ -> ())
+module Observation = struct
+  type t = {
+    event : Event.t;
+    error_origin : Origin.t option;
+    retained_events : Event.t list;
+    dropped_events : int;
+    printer : (Format.formatter -> unit) option;
+  }
+
+  let event observation = observation.event
+  let error_origin observation = observation.error_origin
+  let retained_events observation = observation.retained_events
+  let dropped_events observation = observation.dropped_events
+
+  let pp ppf observation =
+    match observation.printer with
+    | Some printer -> printer ppf
+    | None ->
+        Format.fprintf ppf "@[<v>event: %a" Event.pp observation.event;
+        (match observation.error_origin with
+        | None -> ()
+        | Some origin -> Format.fprintf ppf "@,error detected at:@,  @[<v>%a@]" Origin.pp origin);
+        (match observation.retained_events with
+        | [] -> ()
+        | events -> Format.fprintf ppf "@,retained trace:@,  @[<v>%a@]" Event.pp_events events);
+        if observation.dropped_events <> 0 then
+          Format.fprintf ppf "@,%d older trace event%s omitted" observation.dropped_events
+            (if observation.dropped_events = 1 then "" else "s");
+        Format.fprintf ppf "@]"
+end
+
+module Monitor = struct
+  type entry = {
+    active : bool Atomic.t;
+    actions : Action.Set.t;
+    callback : Observation.t -> unit;
+    on_error : exn -> Stack.t option -> unit;
+  }
+
+  type t = entry
+  type callback = Observation.t -> unit
+
+  let registry : entry list Atomic.t = Atomic.make []
+
+  let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) callback =
+    let entry = { active = Atomic.make true; actions; callback; on_error } in
+    let rec add () =
+      let previous = Atomic.get registry in
+      if not (Atomic.compare_and_set registry previous (entry :: previous)) then add ()
+    in
+    add ();
+    entry
+
+  let remove entry =
+    if not (Atomic.compare_and_set entry.active true false) then false
+    else
+      let rec drop () =
+        let previous = Atomic.get registry in
+        let next = List.filter (fun candidate -> candidate != entry) previous in
+        if not (Atomic.compare_and_set registry previous next) then drop ()
+      in
+      drop ();
+      true
+
+  let pp ppf entry = Format.pp_print_string ppf (if Atomic.get entry.active then "installed" else "removed")
+  let pp_callback ppf _ = Format.pp_print_string ppf "<callback>"
+
+  let callback_stack () =
+    match (Atomic.get current_config).backtrace with
+    | Never -> None
+    | Origin | Events ->
+        let stack = Stack.of_raw_backtrace (Printexc.get_raw_backtrace ()) in
+        if Stack.is_available stack then Some stack else None
+
+  let dispatch action make_observation =
+    let entries =
+      Atomic.get registry
+      |> List.filter (fun entry -> Atomic.get entry.active && Action.Set.mem action entry.actions)
+      |> List.rev
+    in
+    match entries with
+    | [] -> ()
+    | _ ->
+        let observation = make_observation () in
+        List.iter
+          (fun entry ->
+            try entry.callback observation
+            with exn -> (
+              let stack = callback_stack () in
+              ignore (remove entry);
+              try entry.on_error exn stack with _ -> ()))
+          entries
+end
 
 module Error = struct
   type +'e t = {
@@ -307,14 +405,7 @@ module Error = struct
     }
 
   let map_kind_untraced f error = with_kind_untraced (f error.kind) error
-  let pp_event = Event.pp
-
-  let pp_events ppf = function
-    | [] -> ()
-    | event :: events ->
-        pp_event ppf event;
-        List.iter (fun event -> Format.fprintf ppf "@,%a" pp_event event) events
-
+  let pp_events = Event.pp_events
   let pp_kind pp_kind ppf error = pp_kind ppf error.kind
 
   let pp pp_kind ppf error =
@@ -369,7 +460,14 @@ module Error = struct
         }
       in
       let printer = match pp_error with None -> None | Some pp_error -> Some (fun ppf -> pp pp_error ppf error) in
-      !event_dispatch event error.origin error.events_rev error.dropped_events printer;
+      Monitor.dispatch (Event.action event) (fun () ->
+          {
+            Observation.event;
+            error_origin = error.origin;
+            retained_events = List.rev error.events_rev;
+            dropped_events = error.dropped_events;
+            printer;
+          });
       error
 
   let make ?pos ?pp_error kind =
@@ -556,106 +654,6 @@ module Config = struct
     | _, _, _, _, Error error ->
         Error (Error.make ~pp_error:pp_of_strings_error (error : of_strings_error))
 end
-
-module Observation = struct
-  type t = {
-    event : Event.t;
-    error_origin : Origin.t option;
-    retained_events : Event.t list;
-    dropped_events : int;
-    printer : (Format.formatter -> unit) option;
-  }
-
-  let event observation = observation.event
-  let error_origin observation = observation.error_origin
-  let retained_events observation = observation.retained_events
-  let dropped_events observation = observation.dropped_events
-
-  let pp ppf observation =
-    match observation.printer with
-    | Some printer -> printer ppf
-    | None ->
-        Format.fprintf ppf "@[<v>event: %a" Event.pp observation.event;
-        (match observation.error_origin with
-        | None -> ()
-        | Some origin -> Format.fprintf ppf "@,error detected at:@,  @[<v>%a@]" Origin.pp origin);
-        (match observation.retained_events with
-        | [] -> ()
-        | events -> Format.fprintf ppf "@,retained trace:@,  @[<v>%a@]" Error.pp_events events);
-        if observation.dropped_events <> 0 then
-          Format.fprintf ppf "@,%d older trace event%s omitted" observation.dropped_events
-            (if observation.dropped_events = 1 then "" else "s");
-        Format.fprintf ppf "@]"
-end
-
-module Monitor = struct
-  type entry = {
-    active : bool Atomic.t;
-    actions : Action.Set.t;
-    callback : Observation.t -> unit;
-    on_error : exn -> Stack.t option -> unit;
-  }
-
-  type t = entry
-  type callback = Observation.t -> unit
-
-  let registry : entry list Atomic.t = Atomic.make []
-
-  let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) callback =
-    let entry = { active = Atomic.make true; actions; callback; on_error } in
-    let rec add () =
-      let previous = Atomic.get registry in
-      if not (Atomic.compare_and_set registry previous (entry :: previous)) then add ()
-    in
-    add ();
-    entry
-
-  let remove entry =
-    if not (Atomic.compare_and_set entry.active true false) then false
-    else
-      let rec drop () =
-        let previous = Atomic.get registry in
-        let next = List.filter (fun candidate -> candidate != entry) previous in
-        if not (Atomic.compare_and_set registry previous next) then drop ()
-      in
-      drop ();
-      true
-
-  let pp ppf entry = Format.pp_print_string ppf (if Atomic.get entry.active then "installed" else "removed")
-  let pp_callback ppf _ = Format.pp_print_string ppf "<callback>"
-
-  let callback_stack () =
-    match Config.backtrace (Config.get ()) with
-    | Config.Never -> None
-    | Config.Origin | Config.Events ->
-        let stack = Stack.of_raw_backtrace (Printexc.get_raw_backtrace ()) in
-        if Stack.is_available stack then Some stack else None
-
-  let dispatch action make_observation =
-    let entries =
-      Atomic.get registry
-      |> List.filter (fun entry -> Atomic.get entry.active && Action.Set.mem action entry.actions)
-      |> List.rev
-    in
-    match entries with
-    | [] -> ()
-    | _ ->
-        let observation = make_observation () in
-        List.iter
-          (fun entry ->
-            try entry.callback observation
-            with exn -> (
-              let stack = callback_stack () in
-              ignore (remove entry);
-              try entry.on_error exn stack with _ -> ()))
-          entries
-end
-
-let () =
-  event_dispatch :=
-    fun event error_origin events_rev dropped_events printer ->
-      Monitor.dispatch (Event.action event) (fun () ->
-          { Observation.event; error_origin; retained_events = List.rev events_rev; dropped_events; printer })
 
 let pp pp_value pp_error ppf = function
   | Ok value -> Format.fprintf ppf "@[<hov 2>Ok@ (%a)@]" pp_value value
