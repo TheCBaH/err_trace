@@ -857,8 +857,11 @@ module Accum = struct
 
   (* The batch wrapper takes no [pp_error]: each element failure already
      dispatched its own observation, with its own domain printer, at its own
-     detection site. *)
-  let collected ?pos errors_rev = Error (Error.make ?pos (Stdlib.List.rev errors_rev))
+     detection site; the wrapper therefore records neither a [Detect] event nor
+     a call stack, only the position of the batch. *)
+  let collected ?pos errors_rev =
+    let origin = Origin.make ?source:(Option.map Source.of_pos pos) () in
+    Error (Error.make_at ~origin (Stdlib.List.rev errors_rev))
 
   let map ?pos f values =
     let rec loop mapped errors_rev = function

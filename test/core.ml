@@ -1155,3 +1155,18 @@ let%expect_test "protect and import record events under the configuration read a
       in
       print_endline ("[" ^ action_names imported ^ "]");
       [%expect "[]"])
+
+let%expect_test "an accumulated batch dispatches one Detect per element failure" =
+  with_config (make_config ~backtrace:Config.Origin ()) (fun () ->
+      let detected = ref 0 in
+      let handle = Monitor.install ~actions:(Action.Set.of_list [ Action.Detect ]) (fun _ -> incr detected) in
+      let result = Accum.map ~pos:__POS__ (fun value -> fail (`Even value)) [ 2; 4; 6 ] in
+      ignore (Monitor.remove handle);
+      Printf.printf "%d\n" !detected;
+      [%expect "3"];
+      let wrapper = get_error result in
+      print_endline (action_names wrapper);
+      [%expect ""];
+      let origin = Option.get (Error.origin wrapper) in
+      print_bool (Origin.source origin <> None && Origin.stack origin = None);
+      [%expect "true"])
