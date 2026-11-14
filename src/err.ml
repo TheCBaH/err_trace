@@ -310,7 +310,8 @@ module Config = struct
     [ make_error
     | `Invalid_limit of limit * string
     | `Unknown_backtrace_mode of string
-    | `Unknown_trace_action of string ]
+    | `Unknown_trace_action of string
+    | `Empty_trace_action of int ]
 
   (* [Never] prints as [off] so that the two configuration axes name the disabled
      state with one word, and so that this printer's output is accepted by
@@ -337,6 +338,7 @@ module Config = struct
     | `Unknown_backtrace_mode value ->
         Format.fprintf ppf "unknown backtrace mode %S (expected off, never, origin, or events)" value
     | `Unknown_trace_action value -> Format.fprintf ppf "unknown trace action %S" value
+    | `Empty_trace_action position -> Format.fprintf ppf "empty trace action at position %d" position
 
   let invalid_limit limit value =
     if value < 0 then Some (`Negative_limit (limit, value))
@@ -381,24 +383,29 @@ module Config = struct
       Action.Set.pp config.actions pp_backtrace config.backtrace config.max_events config.max_frames
       config.max_external_bytes
 
+  (* [Set.t] is a bit mask, so a group name in a list is a union. *)
   let parse_actions = function
-    | None -> Ok default.actions
-    | Some "off" -> Ok Action.Set.empty
-    | Some "boundaries" -> Ok Action.Set.boundaries
-    | Some "all" -> Ok Action.Set.all
+    | None | Some "" -> Ok default.actions
     | Some value ->
-        let rec loop selected = function
-          | [] -> Ok (Action.Set.of_list selected)
+        let rec loop selected position = function
+          | [] -> Ok selected
           | name :: names -> (
               (* [Action.Set.pp] separates with a break hint, which renders as a
                  space or a newline. Trimming here is what lets a printed policy
                  be parsed back. *)
               let name = String.trim name in
-              match Action.of_string name with
-              | Some parsed -> loop (parsed :: selected) names
-              | None -> Error (`Unknown_trace_action name))
+              let group set = loop (selected lor set) (position + 1) names in
+              match name with
+              | "" -> Error (`Empty_trace_action position)
+              | "off" -> group Action.Set.empty
+              | "boundaries" -> group Action.Set.boundaries
+              | "all" -> group Action.Set.all
+              | _ -> (
+                  match Action.of_string name with
+                  | Some parsed -> group (Action.Set.of_list [ parsed ])
+                  | None -> Error (`Unknown_trace_action name)))
         in
-        loop [] (String.split_on_char ',' value)
+        loop Action.Set.empty 1 (String.split_on_char ',' value)
 
   (* Both spellings of the disabled state are accepted: [off] is what
      {!pp_backtrace} prints and what [trace] uses, [never] names the constructor
@@ -410,12 +417,33 @@ module Config = struct
     | Some "events" -> Ok Events
     | Some value -> Error (`Unknown_backtrace_mode value)
 
+  (* [int_of_string_opt] also reads [0x10], [0b11] and [1_000], and on a 32-bit
+     runtime reports a 31-bit overflow as a non-integer. Digits only, with
+     overflow reported as such. *)
+  let parse_integer input =
+    let length = String.length input in
+    let negative = length > 0 && input.[0] = '-' in
+    let start = if negative || (length > 0 && input.[0] = '+') then 1 else 0 in
+    let rec all_digits index =
+      index = length || (input.[index] >= '0' && input.[index] <= '9' && all_digits (index + 1))
+    in
+    let rec accumulate index acc =
+      if index = length then `Value (if negative then -acc else acc)
+      else
+        let digit = Char.code input.[index] - Char.code '0' in
+        if acc > (max_int - digit) / 10 then `Overflow negative else accumulate (index + 1) ((acc * 10) + digit)
+    in
+    if start >= length || not (all_digits start) then None else Some (accumulate start 0)
+
   let parse_limit limit = function
     | None -> Ok None
     | Some input -> (
-        match int_of_string_opt (String.trim input) with
+        match parse_integer (String.trim input) with
         | None -> Error (`Invalid_limit (limit, input))
-        | Some value -> ( match invalid_limit limit value with None -> Ok (Some value) | Some error -> Error error))
+        | Some (`Overflow true) -> Error (`Negative_limit (limit, min_int))
+        | Some (`Overflow false) -> Error (`Limit_too_large (limit, max_int))
+        | Some (`Value value) -> (
+            match invalid_limit limit value with None -> Ok (Some value) | Some error -> Error error))
 
   let value_or default = function Some value -> value | None -> default
 

@@ -178,7 +178,8 @@ module Config : sig
     [ make_error
     | `Invalid_limit of limit * string
     | `Unknown_backtrace_mode of string
-    | `Unknown_trace_action of string ]
+    | `Unknown_trace_action of string
+    | `Empty_trace_action of int  (** 1-based position of an empty item in a comma-separated list *) ]
   (** Typed parsing and validation failures returned by {!of_strings}. *)
 
   val pp_backtrace : Format.formatter -> backtrace -> unit

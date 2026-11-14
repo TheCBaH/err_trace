@@ -1170,3 +1170,47 @@ let%expect_test "an accumulated batch dispatches one Detect per element failure"
       let origin = Option.get (Error.origin wrapper) in
       print_bool (Origin.source origin <> None && Origin.stack origin = None);
       [%expect "true"])
+
+let%expect_test "of_strings parses limits by hand and accepts groups in trace lists" =
+  let describe = function
+    | Ok parsed -> Format.asprintf "%a / %d" Action.Set.pp (Config.actions parsed) (Config.max_events parsed)
+    | Error error -> (
+        match Error.kind error with
+        | `Limit_too_large _ -> "too large"
+        | `Negative_limit _ -> "negative"
+        | kind -> Format.asprintf "%a" Config.pp_of_strings_error kind)
+  in
+  let parse ?trace ?max_events () =
+    describe (Config.of_strings ~trace ~backtrace:None ~max_events ~max_frames:None ~max_external_bytes:None)
+  in
+  Stdlib.List.iter
+    (fun value -> Printf.printf "%S: %s\n" value (parse ~max_events:value ()))
+    [
+      "7"; " 7 "; "-1"; "1073741824"; "99999999999999999999"; "-99999999999999999999"; "0x10"; "0b11"; "1_000"; ""; "-";
+    ];
+  [%expect
+    {|
+    "7": map, filter, catch, raise, import, export / 7
+    " 7 ": map, filter, catch, raise, import, export / 7
+    "-1": negative
+    "1073741824": too large
+    "99999999999999999999": too large
+    "-99999999999999999999": negative
+    "0x10": max_events must be an integer (got "0x10")
+    "0b11": max_events must be an integer (got "0b11")
+    "1_000": max_events must be an integer (got "1_000")
+    "": max_events must be an integer (got "")
+    "-": max_events must be an integer (got "-")
+    |}];
+  Stdlib.List.iter
+    (fun value -> Printf.printf "%S: %s\n" value (parse ~trace:value ()))
+    [ "boundaries,detect"; "map,all"; "off,map"; ""; "map,,filter"; ",map" ];
+  [%expect
+    {|
+    "boundaries,detect": detect, map, filter, catch, raise, import, export / 32
+    "map,all": detect, map, filter, catch, raise, import, export / 32
+    "off,map": map / 32
+    "": map, filter, catch, raise, import, export / 32
+    "map,,filter": empty trace action at position 2
+    ",map": empty trace action at position 1
+    |}]
