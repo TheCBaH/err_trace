@@ -833,8 +833,8 @@ let%expect_test "configuration vocabulary round-trips through of_strings" =
     {|
     off
     off
-    origin
-    events
+    off
+    off
     unknown backtrace mode "sometimes" (expected off, never, origin, or events)
     |}];
   (* Action.Set.pp separates with a break hint, so parsing must ignore spacing. *)
@@ -1674,3 +1674,29 @@ let%expect_test "applicative syntax joins the failures of every operand" =
         negative -1; negative -2; negative -3
         detected 6
         |}])
+
+let%expect_test "a policy that captures zero frames is stored as no backtrace" =
+  let backtrace_of ~backtrace ~max_frames =
+    match Config.make ~actions:Action.Set.all ~backtrace ~max_events:4 ~max_frames ~max_external_bytes:16 with
+    | Ok config -> Format.asprintf "%a" Config.pp_backtrace (Config.backtrace config)
+    | Error _ -> "error"
+  in
+  Stdlib.List.iter
+    (fun (backtrace, max_frames) -> print_endline (backtrace_of ~backtrace ~max_frames))
+    [ (Config.Origin, 0); (Config.Events, 0); (Config.Origin, 1); (Config.Events, 1); (Config.Never, 0) ];
+  let parsed =
+    Config.of_strings ~trace:None ~backtrace:(Some "events") ~max_events:None ~max_frames:(Some "0")
+      ~max_external_bytes:None
+  in
+  print_endline
+    (match parsed with
+    | Ok config -> Format.asprintf "%a" Config.pp_backtrace (Config.backtrace config)
+    | Error _ -> "error");
+  [%expect {|
+    off
+    off
+    origin
+    events
+    off
+    off
+    |}]

@@ -15,6 +15,8 @@
 - `Config.of_strings_error` has a new case, `` `Empty_trace_action of int ``
   (1-based position of an empty item in a comma-separated `trace` list); an
   exhaustive match must handle it.
+- `Config.make` and `Config.of_strings` store `backtrace = Never` when `max_frames = 0`
+  (it used to keep `Origin` or `Events` while capturing nothing).
 - `Config.of_strings` limits are digits only: `0x10`, `0b11` and `1_000` are
   no longer accepted, and an overflow is `` `Limit_too_large `` on every word
   size.

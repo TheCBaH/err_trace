@@ -558,7 +558,11 @@ module Config = struct
         invalid_limit `Max_external_bytes max_external_bytes )
     with
     | Some error, _, _ | _, Some error, _ | _, _, Some error -> Error error
-    | None, None, None -> Ok { actions; backtrace; max_events; max_frames; max_external_bytes }
+    | None, None, None ->
+        (* No frames can be captured, so the mode would only claim a capture
+           that never happens. *)
+        let backtrace = if max_frames = 0 then Never else backtrace in
+        Ok { actions; backtrace; max_events; max_frames; max_external_bytes }
 
   let make ~actions ~backtrace ~max_events ~max_frames ~max_external_bytes =
     match validate ~actions ~backtrace ~max_events ~max_frames ~max_external_bytes with
