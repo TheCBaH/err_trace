@@ -69,6 +69,10 @@ type config = {
 (* OCaml integers have 31 value bits on a 32-bit runtime. *)
 let max_32_bit_limit = 0x3fff_ffff
 
+(* Each retained event can carry a stack of up to [max_frames] frames, so an
+   unbounded trail is an unbounded allocation per error. *)
+let max_events_cap = 4096
+
 let fast_config =
   { actions = Action.Set.empty; backtrace = Never; max_events = 0; max_frames = 0; max_external_bytes = 16 * 1024 }
 
@@ -510,6 +514,8 @@ module Config = struct
 
   let pp_make_error ppf = function
     | `Negative_limit (limit, value) -> Format.fprintf ppf "%a must be non-negative (got %d)" pp_limit limit value
+    | `Limit_too_large (`Max_events, value) when value <= max_32_bit_limit ->
+        Format.fprintf ppf "max_events must be at most %d (got %d)" max_events_cap value
     | `Limit_too_large (limit, value) ->
         Format.fprintf ppf "%a must fit on a 32-bit OCaml runtime (got %d)" pp_limit limit value
 
@@ -523,7 +529,8 @@ module Config = struct
 
   let invalid_limit limit value =
     if value < 0 then Some (`Negative_limit (limit, value))
-    else if value > max_32_bit_limit then Some (`Limit_too_large (limit, value))
+    else if value > max_32_bit_limit || (limit = `Max_events && value > max_events_cap) then
+      Some (`Limit_too_large (limit, value))
     else None
 
   let validate ~actions ~backtrace ~max_events ~max_frames ~max_external_bytes =

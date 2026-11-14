@@ -222,8 +222,9 @@ module Config : sig
   val pp_of_strings_error : Format.formatter -> of_strings_error -> unit
   (** Render a configuration parsing or validation failure. *)
 
-  (** Validate limits and construct a trace policy. Limits must be non-negative and representable on a 32-bit runtime.
-      Failures use the library's own typed error wrapper. *)
+  (** Validate limits and construct a trace policy. Limits must be non-negative and representable on a 32-bit runtime,
+      and [max_events] is at most 4096: each retained event can hold a stack of [max_frames] frames, so a larger trail
+      is an unbounded cost per error. Failures use the library's own typed error wrapper. *)
   val make :
     actions:Action.Set.t ->
     backtrace:backtrace ->

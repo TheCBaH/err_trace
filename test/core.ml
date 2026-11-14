@@ -1382,15 +1382,15 @@ let%expect_test "every action set, backtrace mode and limit round-trips through 
         Stdlib.List.iter
           (fun limit ->
             let config =
-              make_config ~actions ~backtrace ~max_events:limit ~max_frames:(limit / 2) ~max_external_bytes:(limit + 1)
-                ()
+              make_config ~actions ~backtrace ~max_events:(min limit 4096) ~max_frames:(limit / 2)
+                ~max_external_bytes:(limit + 1) ()
             in
             let text = Format.asprintf "%a" Config.pp config in
             let reparsed =
               Config.of_strings
                 ~trace:(Some (Format.asprintf "%a" Action.Set.pp actions))
                 ~backtrace:(Some (Format.asprintf "%a" Config.pp_backtrace backtrace))
-                ~max_events:(Some (string_of_int limit))
+                ~max_events:(Some (string_of_int (min limit 4096)))
                 ~max_frames:(Some (string_of_int (limit / 2)))
                 ~max_external_bytes:(Some (string_of_int (limit + 1)))
             in
@@ -1437,3 +1437,27 @@ let%expect_test "accessors expose the pieces of positions, external stacks and p
     true
     true 1 2
     |}]
+
+let%expect_test "max_events is capped so the trail stays bounded" =
+  let make max_events =
+    match
+      Config.make ~actions:Action.Set.all ~backtrace:Config.Never ~max_events ~max_frames:0 ~max_external_bytes:0
+    with
+    | Ok config -> Printf.sprintf "ok %d" (Config.max_events config)
+    | Error error -> Format.asprintf "%a" Config.pp_make_error (Error.kind error)
+  in
+  Stdlib.List.iter (fun value -> print_endline (make value)) [ 4096; 4097; 0x3fff_ffff ];
+  [%expect
+    {|
+    ok 4096
+    max_events must be at most 4096 (got 4097)
+    max_events must be at most 4096 (got 1073741823)
+    |}];
+  let parsed =
+    Config.of_strings ~trace:None ~backtrace:None ~max_events:(Some "4097") ~max_frames:None ~max_external_bytes:None
+  in
+  print_bool
+    (match parsed with
+    | Error error -> ( match Error.kind error with `Limit_too_large _ -> true | _ -> false)
+    | Ok _ -> false);
+  [%expect {| true |}]
