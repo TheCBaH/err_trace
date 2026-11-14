@@ -59,7 +59,7 @@ let import_wire wire : (unit, error Err.Error.t) result =
           let message =
             match List.assoc_opt "message" fields with Some (`String message) -> message | _ -> "unknown"
           in
-          Error (Err.Error.make (`Remote message)) |> Err.mark_error `Import
+          Err.import (fun message -> `Remote message) (Error message)
       | _ -> invalid_arg "unsupported wire error")
   | _ -> invalid_arg "wire error must be an object"
 

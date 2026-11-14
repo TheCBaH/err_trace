@@ -20,7 +20,7 @@ let config =
   |> Result.get_ok
 
 let import (result : 'a Octez.tzresult) : ('a, error Err.Error.t) result =
-  result |> Result.map_error (fun trace -> Err.Error.make (`Octez_trace trace)) |> Err.mark_error `Import
+  Err.import (fun trace -> `Octez_trace trace) result
 
 let export (result : ('a, error Err.Error.t) result) : 'a Octez.tzresult =
   match Err.mark_error `Export result with

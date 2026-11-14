@@ -7,10 +7,9 @@ let config =
   |> Result.get_ok
 
 let import (promise : ('a, string) result Lwt.t) : ('a, error Err.Error.t) result Lwt.t =
-  Lwt.map (Result.map_error (fun message -> Err.Error.make (`Foreign message))) promise
-  |> Lwt.map (Err.mark_error `Import)
+  Lwt.map (Err.import (fun message -> `Foreign message)) promise
 
-let export promise = Lwt.map (Err.mark_error `Export) promise |> Lwt.map (Result.map_error Err.Error.kind)
+let export promise = Lwt.map Err.export promise
 let returned promise = match Lwt.state promise with Lwt.Return value -> value | _ -> assert false
 
 let () =

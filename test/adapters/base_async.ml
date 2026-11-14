@@ -13,7 +13,7 @@ let config =
   |> Result.get_ok
 
 let import_or_error (result : ('a, Base.Error.t) result) : ('a, error Err.Error.t) result =
-  result |> Stdlib.Result.map_error (fun error -> Err.Error.make (`Jane_street error)) |> Err.mark_error `Import
+  Err.import (fun error -> `Jane_street error) result
 
 let export_or_error result : int Base.Or_error.t =
   result |> Err.mark_error `Export
