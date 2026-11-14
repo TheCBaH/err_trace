@@ -10,6 +10,9 @@ module Source : sig
   val of_pos : pos -> t
   (** Build a source coordinate from OCaml's [__POS__] value. *)
 
+  val to_pos : t -> pos
+  (** The [__POS__] value this coordinate was built from. *)
+
   val pp_pos : Format.formatter -> pos -> unit
   (** Print an unwrapped [__POS__] value. *)
 
@@ -19,23 +22,32 @@ end
 
 module Stack : sig
   type t
-  (** A native raw backtrace or a bounded stack imported from another runtime. *)
+  (** A native stack or a bounded stack imported from another runtime. A stack caught by {!Err.protect} is cut to
+      {!Err.Config.max_frames} frames before it is retained. *)
 
   val of_raw_backtrace : Printexc.raw_backtrace -> t
   (** Wrap a native raw backtrace. *)
 
   val of_external : runtime:string -> stack:string -> t
-  (** Import a foreign runtime's stack string, bounded by {!Err.Config.max_external_bytes}.
+  (** Import a foreign runtime's stack string, bounded by {!Err.Config.max_external_bytes}. A longer stack is cut back
+      to its last whole line, or to a UTF-8 character boundary when no line break fits. [runtime] is a short label
+      chosen by the caller and is not bounded.
 
       This serves one narrow case: a JavaScript host that hands your program its own stack, which an adapter imports
       rather than captures. A library or a command-line program never calls it, and can ignore this constructor,
       {!is_available}, and the [max_external_bytes] limit entirely. *)
 
+  val to_external : t -> (string * string * bool) option
+  (** [Some (runtime, stack, truncated)] for a stack built by {!of_external}, with [stack] as retained after bounding,
+      and [None] for a native stack. *)
+
   val is_available : t -> bool
   (** Whether this stack contains available diagnostic data. *)
 
   val to_raw_backtrace : t -> Printexc.raw_backtrace option
-  (** Return a native backtrace when this is not an external stack. *)
+  (** The native backtrace this stack was built from, when all of it was kept. [None] for an imported external stack,
+      and for a native stack that {!Err.protect} cut to {!Err.Config.max_frames}: a prefix of frames cannot be turned
+      back into a raw backtrace, so use {!pp} to see what was retained. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render the stack. *)
@@ -95,6 +107,21 @@ module Action : sig
 
     val mem : action -> t -> bool
     (** Test action membership. *)
+
+    val add : action -> t -> t
+    (** [add action set] selects [action] in addition to [set]. *)
+
+    val remove : action -> t -> t
+    (** [remove action set] deselects [action]; absent actions are ignored. *)
+
+    val union : t -> t -> t
+    (** The actions selected by either set. *)
+
+    val to_list : t -> action list
+    (** The selected actions in declaration order ([Detect] first), without duplicates. *)
+
+    val equal : t -> t -> bool
+    (** Whether two sets select the same actions. *)
 
     val pp : Format.formatter -> t -> unit
     (** Render selected actions, or [off] for the empty set. *)
@@ -178,7 +205,8 @@ module Config : sig
     [ make_error
     | `Invalid_limit of limit * string
     | `Unknown_backtrace_mode of string
-    | `Unknown_trace_action of string ]
+    | `Unknown_trace_action of string
+    | `Empty_trace_action of int  (** 1-based position of an empty item in a comma-separated list *) ]
   (** Typed parsing and validation failures returned by {!of_strings}. *)
 
   val pp_backtrace : Format.formatter -> backtrace -> unit
@@ -194,8 +222,9 @@ module Config : sig
   val pp_of_strings_error : Format.formatter -> of_strings_error -> unit
   (** Render a configuration parsing or validation failure. *)
 
-  (** Validate limits and construct a trace policy. Limits must be non-negative and representable on a 32-bit runtime.
-      Failures use the library's own typed error wrapper. *)
+  (** Validate limits and construct a trace policy. Limits must be non-negative and representable on a 32-bit runtime,
+      and [max_events] is at most 4096: each retained event can hold a stack of [max_frames] frames, so a larger trail
+      is an unbounded cost per error. Failures use the library's own typed error wrapper. *)
   val make :
     actions:Action.Set.t ->
     backtrace:backtrace ->
@@ -227,7 +256,9 @@ module Config : sig
   val debug : t
   (** All-event preset with event stacks. *)
 
-  (** Process-wide atomic configuration. Change it during startup where possible. *)
+  (** Process-wide atomic configuration. Change it during startup where possible. The policy is global rather than
+      per-error or per-domain because errors are plain values with no handle to a context: whatever creates or marks an
+      error reads the policy current at that moment. *)
   val get : unit -> t
   (** Read the current process-wide policy atomically. *)
 
@@ -298,7 +329,10 @@ end
 
 module Monitor : sig
   type t
-  (** A handle for one installed monitor. Pass it to {!remove} when the monitor is no longer needed. *)
+  (** A handle for one installed monitor. Pass it to {!remove} when the monitor is no longer needed.
+
+      The set of monitors, like the {!Config} policy, is process-global: every domain and thread dispatches to the same
+      monitors, because an error value carries no handle to a registry of its own. Install monitors during startup. *)
 
   type callback = Observation.t -> unit
   (** A synchronous callback invoked for each matching enabled event. Callbacks must be short, non-blocking, and must
@@ -310,7 +344,10 @@ module Monitor : sig
 
   val remove : t -> bool
   (** Idempotently remove a monitor. It returns [true] only for the call that changes an installed monitor to removed.
-  *)
+
+      Dispatch works on a snapshot of the monitors installed when it started, taken in installation order. A monitor
+      removed by an earlier callback of the {e same} dispatch is therefore still called once more in that dispatch, and
+      is skipped from the next event on. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render whether this monitor handle is currently [installed] or [removed]. *)
@@ -388,7 +425,12 @@ module Escape : sig
       the wrapper built at the throw and the catch guaranteed by construction.
 
       It is the companion of {!Err.protect}: [protect] absorbs an exception raised by {e foreign} code, while
-      [with_escape] establishes an exit for the {e current} module's own recursion. *)
+      [with_escape] establishes an exit for the {e current} module's own recursion.
+
+      Two caveats. A catch-all handler ([try ... with _ ->]) between {!throw} and its {!with_escape} absorbs the escape
+      like any exception, so code inside the walk must let it pass. And a token is not a cross-thread channel: thrown
+      from another thread or domain, the exception unwinds that thread's own stack and never reaches the frame that owns
+      the token. *)
 
   type 'e t
   (** A token authorising an exit from one {!with_escape} call. It is valid only on the call stack that {!with_escape}
@@ -414,10 +456,11 @@ module Escape : sig
   (** Detect a failure and exit to its {!with_escape} frame. Records [Detect] under the active policy: the throw is the
       detection site. *)
 
-  val throw_error : 'e t -> 'e Error.t -> 'a
-  (** Exit with an already-constructed wrapper, adding no event and preserving its origin. *)
+  val throw_error : ?pos:Source.pos -> 'e t -> 'e Error.t -> 'a
+  (** Exit with an already-constructed wrapper, adding no event and preserving its origin. [pos] only locates the call
+      in {!Escaped_after_exit} when the token's frame has already returned. *)
 
-  val or_throw : 'e t -> ('a, 'e Error.t) result -> 'a
+  val or_throw : ?pos:Source.pos -> 'e t -> ('a, 'e Error.t) result -> 'a
   (** Return the value, or exit with the existing wrapper. Its argument type is [('a, 'e) Err.t]: this is the bridge
       that lets a recursive walk call ordinary result-returning functions without threading results through its own
       arms. *)
@@ -443,6 +486,15 @@ module Exn : sig
 
   val pp : Format.formatter -> packed -> unit
   (** Render a packed error. *)
+
+  val origin : packed -> Origin.t option
+  (** Where the carried error was created, as {!Error.origin}. *)
+
+  val events : packed -> Event.t list
+  (** The retained trail, oldest first, as {!Error.events}. *)
+
+  val dropped_events : packed -> int
+  (** Events not retained, as {!Error.dropped_events}. *)
 
   val pp_kind : Format.formatter -> packed -> unit
   (** Render only the domain payload, omitting origin and events. Use at a boundary that must not emit provenance -- a
@@ -489,7 +541,8 @@ module type Domain = sig
 end
 
 (** The operations of {!Err} that take a printer, with that printer already supplied. Everything else -- {!return},
-    {!bind}, {!map}, {!payload}, {!Syntax}, {!List}, {!Accum} -- needs no printer and stays in {!Err}.
+    {!bind}, {!map}, {!payload}, {!Syntax}, {!Accum}, and the {!List} traversals other than {!List.map2} and
+    {!List.iter2} -- needs no printer and stays in {!Err}.
 
     Use the result qualified, as [E.fail] and [E.Error.make]. Including it in a module shadows {!Err.Error} for the rest
     of that module; the [Error] constructor of [Stdlib.result] is unaffected. *)
@@ -548,6 +601,27 @@ module type S = sig
 
   val throw : error Escape.t -> ?pos:Source.pos -> error -> 'a
   (** {!Err.Escape.throw} with the domain printer supplied. *)
+
+  (** The {!Err.List} traversals that can detect a failure of their own and so take a printer. *)
+  module List : sig
+    val map2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> ('c, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      ('c list, error Error.t) result
+    (** {!Err.List.map2} with the domain printer supplied. *)
+
+    val iter2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> (unit, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      (unit, error Error.t) result
+    (** {!Err.List.iter2} with the domain printer supplied. *)
+  end
 
   (** The {!Err.Error} operations that take a printer. *)
   module Error : sig

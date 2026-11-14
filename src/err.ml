@@ -3,6 +3,7 @@ module Source = struct
   type t = { file : string; line : int; start_column : int; end_column : int }
 
   let of_pos (file, line, start_column, end_column) = { file; line; start_column; end_column }
+  let to_pos t = (t.file, t.line, t.start_column, t.end_column)
   let pp ppf t = Format.fprintf ppf "%s:%d:%d-%d" t.file t.line t.start_column t.end_column
   let pp_pos ppf pos = pp ppf (of_pos pos)
 end
@@ -38,6 +39,11 @@ module Action = struct
     let all = of_list order
     let boundaries = of_list (List.filter (fun action -> action <> Detect) order)
     let mem action set = set land bit action <> 0
+    let add action set = set lor bit action
+    let remove action set = set land lnot (bit action)
+    let union = ( lor )
+    let to_list set = List.filter (fun action -> mem action set) order
+    let equal = Int.equal
 
     let pp ppf set =
       let selected = List.filter (fun action -> mem action set) order in
@@ -62,6 +68,10 @@ type config = {
 
 (* OCaml integers have 31 value bits on a 32-bit runtime. *)
 let max_32_bit_limit = 0x3fff_ffff
+
+(* Each retained event can carry a stack of up to [max_frames] frames, so an
+   unbounded trail is an unbounded allocation per error. *)
+let max_events_cap = 4096
 
 let fast_config =
   { actions = Action.Set.empty; backtrace = Never; max_events = 0; max_frames = 0; max_external_bytes = 16 * 1024 }
@@ -94,14 +104,28 @@ let debug_config =
 let current_config = Atomic.make default_config
 
 module Stack = struct
-  type t = Raw of Printexc.raw_backtrace | External of { runtime : string; stack : string; truncated : bool }
+  type t =
+    | Raw of Printexc.raw_backtrace
+    | Slots of Printexc.backtrace_slot array
+    | External of { runtime : string; stack : string; truncated : bool }
 
   let of_raw_backtrace backtrace = Raw backtrace
+
+  (* Prefer the last whole line inside the limit; a single line longer than the
+     limit is cut at a UTF-8 character boundary instead. *)
+  let cut_point stack limit =
+    if stack.[limit] = '\n' then limit
+    else
+      match String.rindex_from_opt stack (limit - 1) '\n' with
+      | Some line_end when line_end > 0 -> line_end
+      | _ ->
+          let rec back cut = if cut > 0 && Char.code stack.[cut] land 0xC0 = 0x80 then back (cut - 1) else cut in
+          back limit
 
   let of_external ~runtime ~stack =
     let limit = (Atomic.get current_config).max_external_bytes in
     let truncated = String.length stack > limit in
-    let stack = if truncated then String.sub stack 0 limit else stack in
+    let stack = if truncated then String.sub stack 0 (cut_point stack limit) else stack in
     External { runtime; stack; truncated }
 
   (* [Printexc.backtrace_slots], not [raw_backtrace_length]. Melange's
@@ -118,8 +142,29 @@ module Stack = struct
   let raw_is_available backtrace =
     match Printexc.backtrace_slots backtrace with Some slots -> Array.length slots <> 0 | None -> false
 
-  let is_available = function Raw backtrace -> raw_is_available backtrace | External { stack; _ } -> stack <> ""
-  let to_raw_backtrace = function Raw backtrace -> Some backtrace | External _ -> None
+  (* The stack of an exception caught by [protect], bounded to [max_frames]
+     when it is retained. Slots rather than raw entries: there is no way back
+     from a cut array of entries to a [raw_backtrace], and Melange's entry
+     accessors throw where [backtrace_slots] answers [None]. A stack that fits
+     is kept raw, so it can still be re-raised. *)
+  let of_caught ~max_frames backtrace =
+    if max_frames <= 0 then None
+    else
+      match Printexc.backtrace_slots backtrace with
+      | None -> None
+      | Some slots when Array.length slots <= max_frames -> Some (Raw backtrace)
+      | Some slots -> Some (Slots (Array.sub slots 0 max_frames))
+
+  let is_available = function
+    | Raw backtrace -> raw_is_available backtrace
+    | Slots slots -> Array.length slots <> 0
+    | External { stack; _ } -> stack <> ""
+
+  let to_raw_backtrace = function Raw backtrace -> Some backtrace | Slots _ | External _ -> None
+
+  let to_external = function
+    | External { runtime; stack; truncated } -> Some (runtime, stack, truncated)
+    | Raw _ | Slots _ -> None
 
   let pp_lines ppf text =
     match String.split_on_char '\n' text with
@@ -128,11 +173,53 @@ module Stack = struct
         Format.pp_print_string ppf line;
         List.iter (fun line -> Format.fprintf ppf "@,%s" line) lines
 
+  (* Built from slots, not [raw_backtrace_to_string]: that text starts with
+     "Raised by primitive operation" for a call stack that raised nothing, ends
+     in a newline, and its first frames are this library's own. *)
+  let slot_line slot =
+    let location =
+      Option.map
+        (fun (location : Printexc.location) ->
+          Format.asprintf "%a" Source.pp
+            {
+              Source.file = location.filename;
+              line = location.line_number;
+              start_column = location.start_char;
+              end_column = location.end_char;
+            })
+        (Printexc.Slot.location slot)
+    in
+    match (location, Printexc.Slot.name slot) with
+    | Some location, Some name -> Some (location ^ " " ^ name)
+    | Some location, None -> Some location
+    | None, Some name -> Some (name ^ " (unknown location)")
+    | None, None -> None
+
+  let is_own_frame slot =
+    match Printexc.Slot.name slot with
+    | Some name -> String.length name >= 4 && String.sub name 0 4 = "Err."
+    | None -> false
+
+  let rec drop_own_frames = function slot :: slots when is_own_frame slot -> drop_own_frames slots | slots -> slots
+  let slot_lines slots = List.filter_map slot_line (drop_own_frames (Array.to_list slots))
+
+  let pp_slots ppf slots =
+    match slot_lines slots with
+    | [] -> Format.pp_print_string ppf "stack unavailable"
+    | line :: lines ->
+        Format.pp_print_string ppf line;
+        List.iter (fun line -> Format.fprintf ppf "@,%s" line) lines
+
   let pp ppf stack =
     Format.fprintf ppf "@[<v>";
     (match stack with
     | Raw backtrace when not (raw_is_available backtrace) -> Format.pp_print_string ppf "stack unavailable"
-    | Raw backtrace -> pp_lines ppf (Printexc.raw_backtrace_to_string backtrace)
+    | Raw backtrace -> (
+        match Printexc.backtrace_slots backtrace with
+        | Some slots -> pp_slots ppf slots
+        | None -> Format.pp_print_string ppf "stack unavailable")
+    | Slots slots when slot_lines slots = [] -> Format.pp_print_string ppf "stack unavailable"
+    | Slots slots -> Format.fprintf ppf "%a@,[truncated]" pp_slots slots
     | External { stack = ""; _ } -> Format.pp_print_string ppf "stack unavailable"
     | External { runtime; stack; truncated } ->
         Format.fprintf ppf "%s stack:@,%a" runtime pp_lines stack;
@@ -196,9 +283,113 @@ module Event = struct
     Format.fprintf ppf "@[<v>%a" pp_action event.action;
     (match event.origin with None -> () | Some origin -> Format.fprintf ppf " at %a" Origin.pp origin);
     Format.fprintf ppf "@]"
+
+  let pp_events ppf = function
+    | [] -> ()
+    | event :: events ->
+        pp ppf event;
+        List.iter (fun event -> Format.fprintf ppf "@,%a" pp event) events
 end
 
-let event_dispatch = ref (fun _ _ _ _ _ -> ())
+module Observation = struct
+  type t = {
+    event : Event.t;
+    error_origin : Origin.t option;
+    retained_events : Event.t list;
+    dropped_events : int;
+    printer : (Format.formatter -> unit) option;
+  }
+
+  let event observation = observation.event
+  let error_origin observation = observation.error_origin
+  let retained_events observation = observation.retained_events
+  let dropped_events observation = observation.dropped_events
+
+  let pp ppf observation =
+    match observation.printer with
+    | Some printer -> printer ppf
+    | None ->
+        Format.fprintf ppf "@[<v>event: %a" Event.pp observation.event;
+        (match observation.error_origin with
+        | None -> ()
+        | Some origin -> Format.fprintf ppf "@,error detected at:@,  @[<v>%a@]" Origin.pp origin);
+        (match observation.retained_events with
+        | [] -> ()
+        | events -> Format.fprintf ppf "@,retained trace:@,  @[<v>%a@]" Event.pp_events events);
+        if observation.dropped_events <> 0 then
+          Format.fprintf ppf "@,%d older trace event%s omitted" observation.dropped_events
+            (if observation.dropped_events = 1 then "" else "s");
+        Format.fprintf ppf "@]"
+end
+
+module Monitor = struct
+  type entry = {
+    active : bool Atomic.t;
+    actions : Action.Set.t;
+    callback : Observation.t -> unit;
+    on_error : exn -> Stack.t option -> unit;
+  }
+
+  type t = entry
+  type callback = Observation.t -> unit
+
+  (* In installation order, so dispatch needs no reversal. *)
+  let registry : entry list Atomic.t = Atomic.make []
+
+  let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) callback =
+    let entry = { active = Atomic.make true; actions; callback; on_error } in
+    let rec add () =
+      let previous = Atomic.get registry in
+      if not (Atomic.compare_and_set registry previous (previous @ [ entry ])) then add ()
+    in
+    add ();
+    entry
+
+  let remove entry =
+    if not (Atomic.compare_and_set entry.active true false) then false
+    else
+      let rec drop () =
+        let previous = Atomic.get registry in
+        let next = List.filter (fun candidate -> candidate != entry) previous in
+        if not (Atomic.compare_and_set registry previous next) then drop ()
+      in
+      drop ();
+      true
+
+  let pp ppf entry = Format.pp_print_string ppf (if Atomic.get entry.active then "installed" else "removed")
+  let pp_callback ppf _ = Format.pp_print_string ppf "<callback>"
+
+  let callback_stack () =
+    match (Atomic.get current_config).backtrace with
+    | Never -> None
+    | Origin | Events ->
+        let stack = Stack.of_raw_backtrace (Printexc.get_raw_backtrace ()) in
+        if Stack.is_available stack then Some stack else None
+
+  let matches action entry = Atomic.get entry.active && Action.Set.mem action entry.actions
+
+  let rec any_matches action = function
+    | [] -> false
+    | entry :: entries -> matches action entry || any_matches action entries
+
+  (* The monitors that match are fixed when dispatch starts: one removed by an
+     earlier callback of this dispatch is still called, and an event nobody
+     matches costs a scan and no allocation. *)
+  let dispatch action make_observation =
+    let installed = Atomic.get registry in
+    if any_matches action installed then begin
+      let entries = List.filter (matches action) installed in
+      let observation = make_observation () in
+      List.iter
+        (fun entry ->
+          try entry.callback observation
+          with exn -> (
+            let stack = callback_stack () in
+            ignore (remove entry);
+            try entry.on_error exn stack with _ -> ()))
+        entries
+    end
+end
 
 module Error = struct
   type +'e t = {
@@ -224,14 +415,7 @@ module Error = struct
     }
 
   let map_kind_untraced f error = with_kind_untraced (f error.kind) error
-  let pp_event = Event.pp
-
-  let pp_events ppf = function
-    | [] -> ()
-    | event :: events ->
-        pp_event ppf event;
-        List.iter (fun event -> Format.fprintf ppf "@,%a" pp_event event) events
-
+  let pp_events = Event.pp_events
   let pp_kind pp_kind ppf error = pp_kind ppf error.kind
 
   let pp pp_kind ppf error =
@@ -286,7 +470,14 @@ module Error = struct
         }
       in
       let printer = match pp_error with None -> None | Some pp_error -> Some (fun ppf -> pp pp_error ppf error) in
-      !event_dispatch event error.origin (events error) error.dropped_events printer;
+      Monitor.dispatch (Event.action event) (fun () ->
+          {
+            Observation.event;
+            error_origin = error.origin;
+            retained_events = List.rev error.events_rev;
+            dropped_events = error.dropped_events;
+            printer;
+          });
       error
 
   let make ?pos ?pp_error kind =
@@ -310,7 +501,8 @@ module Config = struct
     [ make_error
     | `Invalid_limit of limit * string
     | `Unknown_backtrace_mode of string
-    | `Unknown_trace_action of string ]
+    | `Unknown_trace_action of string
+    | `Empty_trace_action of int ]
 
   (* [Never] prints as [off] so that the two configuration axes name the disabled
      state with one word, and so that this printer's output is accepted by
@@ -328,6 +520,8 @@ module Config = struct
 
   let pp_make_error ppf = function
     | `Negative_limit (limit, value) -> Format.fprintf ppf "%a must be non-negative (got %d)" pp_limit limit value
+    | `Limit_too_large (`Max_events, value) when value <= max_32_bit_limit ->
+        Format.fprintf ppf "max_events must be at most %d (got %d)" max_events_cap value
     | `Limit_too_large (limit, value) ->
         Format.fprintf ppf "%a must fit on a 32-bit OCaml runtime (got %d)" pp_limit limit value
 
@@ -337,10 +531,12 @@ module Config = struct
     | `Unknown_backtrace_mode value ->
         Format.fprintf ppf "unknown backtrace mode %S (expected off, never, origin, or events)" value
     | `Unknown_trace_action value -> Format.fprintf ppf "unknown trace action %S" value
+    | `Empty_trace_action position -> Format.fprintf ppf "empty trace action at position %d" position
 
   let invalid_limit limit value =
     if value < 0 then Some (`Negative_limit (limit, value))
-    else if value > max_32_bit_limit then Some (`Limit_too_large (limit, value))
+    else if value > max_32_bit_limit || (limit = `Max_events && value > max_events_cap) then
+      Some (`Limit_too_large (limit, value))
     else None
 
   let validate ~actions ~backtrace ~max_events ~max_frames ~max_external_bytes =
@@ -381,24 +577,29 @@ module Config = struct
       Action.Set.pp config.actions pp_backtrace config.backtrace config.max_events config.max_frames
       config.max_external_bytes
 
+  (* [Set.t] is a bit mask, so a group name in a list is a union. *)
   let parse_actions = function
-    | None -> Ok default.actions
-    | Some "off" -> Ok Action.Set.empty
-    | Some "boundaries" -> Ok Action.Set.boundaries
-    | Some "all" -> Ok Action.Set.all
+    | None | Some "" -> Ok default.actions
     | Some value ->
-        let rec loop selected = function
-          | [] -> Ok (Action.Set.of_list selected)
+        let rec loop selected position = function
+          | [] -> Ok selected
           | name :: names -> (
               (* [Action.Set.pp] separates with a break hint, which renders as a
                  space or a newline. Trimming here is what lets a printed policy
                  be parsed back. *)
               let name = String.trim name in
-              match Action.of_string name with
-              | Some parsed -> loop (parsed :: selected) names
-              | None -> Error (`Unknown_trace_action name))
+              let group set = loop (selected lor set) (position + 1) names in
+              match name with
+              | "" -> Error (`Empty_trace_action position)
+              | "off" -> group Action.Set.empty
+              | "boundaries" -> group Action.Set.boundaries
+              | "all" -> group Action.Set.all
+              | _ -> (
+                  match Action.of_string name with
+                  | Some parsed -> group (Action.Set.of_list [ parsed ])
+                  | None -> Error (`Unknown_trace_action name)))
         in
-        loop [] (String.split_on_char ',' value)
+        loop Action.Set.empty 1 (String.split_on_char ',' value)
 
   (* Both spellings of the disabled state are accepted: [off] is what
      {!pp_backtrace} prints and what [trace] uses, [never] names the constructor
@@ -410,12 +611,33 @@ module Config = struct
     | Some "events" -> Ok Events
     | Some value -> Error (`Unknown_backtrace_mode value)
 
+  (* [int_of_string_opt] also reads [0x10], [0b11] and [1_000], and on a 32-bit
+     runtime reports a 31-bit overflow as a non-integer. Digits only, with
+     overflow reported as such. *)
+  let parse_integer input =
+    let length = String.length input in
+    let negative = length > 0 && input.[0] = '-' in
+    let start = if negative || (length > 0 && input.[0] = '+') then 1 else 0 in
+    let rec all_digits index =
+      index = length || (input.[index] >= '0' && input.[index] <= '9' && all_digits (index + 1))
+    in
+    let rec accumulate index acc =
+      if index = length then `Value (if negative then -acc else acc)
+      else
+        let digit = Char.code input.[index] - Char.code '0' in
+        if acc > (max_int - digit) / 10 then `Overflow negative else accumulate (index + 1) ((acc * 10) + digit)
+    in
+    if start >= length || not (all_digits start) then None else Some (accumulate start 0)
+
   let parse_limit limit = function
     | None -> Ok None
     | Some input -> (
-        match int_of_string_opt (String.trim input) with
+        match parse_integer (String.trim input) with
         | None -> Error (`Invalid_limit (limit, input))
-        | Some value -> ( match invalid_limit limit value with None -> Ok (Some value) | Some error -> Error error))
+        | Some (`Overflow true) -> Error (`Negative_limit (limit, min_int))
+        | Some (`Overflow false) -> Error (`Limit_too_large (limit, max_int))
+        | Some (`Value value) -> (
+            match invalid_limit limit value with None -> Ok (Some value) | Some error -> Error error))
 
   let value_or default = function Some value -> value | None -> default
 
@@ -446,106 +668,6 @@ module Config = struct
         Error (Error.make ~pp_error:pp_of_strings_error (error : of_strings_error))
 end
 
-module Observation = struct
-  type t = {
-    event : Event.t;
-    error_origin : Origin.t option;
-    retained_events : Event.t list;
-    dropped_events : int;
-    printer : (Format.formatter -> unit) option;
-  }
-
-  let event observation = observation.event
-  let error_origin observation = observation.error_origin
-  let retained_events observation = observation.retained_events
-  let dropped_events observation = observation.dropped_events
-
-  let pp ppf observation =
-    match observation.printer with
-    | Some printer -> printer ppf
-    | None ->
-        Format.fprintf ppf "@[<v>event: %a" Event.pp observation.event;
-        (match observation.error_origin with
-        | None -> ()
-        | Some origin -> Format.fprintf ppf "@,error detected at:@,  @[<v>%a@]" Origin.pp origin);
-        (match observation.retained_events with
-        | [] -> ()
-        | events -> Format.fprintf ppf "@,retained trace:@,  @[<v>%a@]" Error.pp_events events);
-        if observation.dropped_events <> 0 then
-          Format.fprintf ppf "@,%d older trace event%s omitted" observation.dropped_events
-            (if observation.dropped_events = 1 then "" else "s");
-        Format.fprintf ppf "@]"
-end
-
-module Monitor = struct
-  type entry = {
-    active : bool Atomic.t;
-    actions : Action.Set.t;
-    callback : Observation.t -> unit;
-    on_error : exn -> Stack.t option -> unit;
-  }
-
-  type t = entry
-  type callback = Observation.t -> unit
-
-  let registry : entry list Atomic.t = Atomic.make []
-
-  let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) callback =
-    let entry = { active = Atomic.make true; actions; callback; on_error } in
-    let rec add () =
-      let previous = Atomic.get registry in
-      if not (Atomic.compare_and_set registry previous (entry :: previous)) then add ()
-    in
-    add ();
-    entry
-
-  let remove entry =
-    if not (Atomic.compare_and_set entry.active true false) then false
-    else
-      let rec drop () =
-        let previous = Atomic.get registry in
-        let next = List.filter (fun candidate -> candidate != entry) previous in
-        if not (Atomic.compare_and_set registry previous next) then drop ()
-      in
-      drop ();
-      true
-
-  let pp ppf entry = Format.pp_print_string ppf (if Atomic.get entry.active then "installed" else "removed")
-  let pp_callback ppf _ = Format.pp_print_string ppf "<callback>"
-
-  let callback_stack () =
-    match Config.backtrace (Config.get ()) with
-    | Config.Never -> None
-    | Config.Origin | Config.Events ->
-        let stack = Stack.of_raw_backtrace (Printexc.get_raw_backtrace ()) in
-        if Stack.is_available stack then Some stack else None
-
-  let dispatch action make_observation =
-    let entries =
-      Atomic.get registry
-      |> List.filter (fun entry -> Atomic.get entry.active && Action.Set.mem action entry.actions)
-      |> List.rev
-    in
-    match entries with
-    | [] -> ()
-    | _ ->
-        let observation = make_observation () in
-        List.iter
-          (fun entry ->
-            try entry.callback observation
-            with exn -> (
-              let stack = callback_stack () in
-              ignore (remove entry);
-              try entry.on_error exn stack with _ -> ()))
-          entries
-end
-
-let () =
-  event_dispatch :=
-    fun event error_origin retained_events dropped_events printer ->
-      Monitor.dispatch (Event.action event) (fun () ->
-          { Observation.event; error_origin; retained_events; dropped_events; printer })
-
 let pp pp_value pp_error ppf = function
   | Ok value -> Format.fprintf ppf "@[<hov 2>Ok@ (%a)@]" pp_value value
   | Error error -> Format.fprintf ppf "@[<hov 2>Error@ (%a)@]" (Error.pp pp_error) error
@@ -561,7 +683,7 @@ let guard ?pos ?pp_error ~error condition =
     let config = Config.get () in
     let source = Option.map Source.of_pos pos in
     let error = Error.make_at ~origin:(Error.capture config ?source `Origin) error in
-    Error (Error.add_event ?pos ?pp_error Action.Filter error)
+    Error (Error.add_event ~config ?pos ?pp_error Action.Filter error)
 
 let map f = function Ok value -> Ok (f value) | Error error -> Error error
 let bind result f = match result with Ok value -> f value | Error error -> Error error
@@ -585,7 +707,7 @@ let import ?pos ?pp_error f = function
       let config = Config.get () in
       let source = Option.map Source.of_pos pos in
       let error = Error.make_at ~origin:(Error.capture config ?source `Origin) (f kind) in
-      Error (Error.add_event ?pos ?pp_error Action.Import error)
+      Error (Error.add_event ~config ?pos ?pp_error Action.Import error)
 
 let export ?pos ?pp_error result = payload (mark_error ?pos ?pp_error Action.Export result)
 
@@ -594,19 +716,17 @@ let protect ?pos ?pp_error ~catch f =
   with exn -> (
     let config = Config.get () in
     let raw_backtrace = Printexc.get_raw_backtrace () in
-    let retained_backtrace =
-      match Config.backtrace config with Config.Never -> None | Config.Origin | Config.Events -> Some raw_backtrace
-    in
     match catch exn with
     | None -> reraise exn raw_backtrace
     | Some kind ->
         let source = Option.map Source.of_pos pos in
-        let origin =
-          match retained_backtrace with
-          | None -> Origin.make ?source ()
-          | Some backtrace -> Origin.make ?source ~stack:(Stack.of_raw_backtrace backtrace) ()
+        let stack =
+          match Config.backtrace config with
+          | Config.Never -> None
+          | Config.Origin | Config.Events -> Stack.of_caught ~max_frames:(Config.max_frames config) raw_backtrace
         in
-        Error (Error.add_event ?pos ?pp_error Action.Catch (Error.make_at ~origin kind)))
+        let origin = Origin.make ?source ?stack () in
+        Error (Error.add_event ~config ?pos ?pp_error Action.Catch (Error.make_at ~origin kind)))
 
 module Escape = struct
   (* [make_exn] closes over the constructor generated by one [with_escape] call.
@@ -639,13 +759,14 @@ module Escape = struct
         token.live := false;
         reraise exn raw_backtrace
 
-  let throw_error token error = if !(token.live) then raise (token.make_exn error) else raise (Escaped_after_exit None)
+  let throw_error ?pos token error =
+    if !(token.live) then raise (token.make_exn error) else raise (Escaped_after_exit (Option.map Source.of_pos pos))
 
   let throw token ?pos ?pp_error kind =
     if not !(token.live) then raise (Escaped_after_exit (Option.map Source.of_pos pos));
     raise (token.make_exn (Error.make ?pos ?pp_error kind))
 
-  let or_throw token = function Ok value -> value | Error error -> throw_error token error
+  let or_throw ?pos token = function Ok value -> value | Error error -> throw_error ?pos token error
   let map f token = { live = token.live; make_exn = (fun error -> token.make_exn (Error.map_kind_untraced f error)) }
 
   let printer = function
@@ -670,6 +791,9 @@ module Exn = struct
      developer diagnostic, so it would either ship the source's own frames
      outward or re-derive the payload printer it has already been handed. *)
   let pp_kind ppf (Pack (error, pp_error)) = pp_error ppf (Error.kind error)
+  let origin (Pack (error, _)) = Error.origin error
+  let events (Pack (error, _)) = Error.events error
+  let dropped_events (Pack (error, _)) = Error.dropped_events error
   let printer = function E packed -> Some (Format.asprintf "%a" pp packed) | _ -> None
   let () = Printexc.register_printer printer
 end
@@ -713,51 +837,30 @@ module type S = sig
   val with_escape : (error Escape.t -> 'a) -> ('a, error Error.t) result
   val throw : error Escape.t -> ?pos:Source.pos -> error -> 'a
 
+  module List : sig
+    val map2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> ('c, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      ('c list, error Error.t) result
+
+    val iter2 :
+      ?pos:Source.pos ->
+      unequal_lengths:(int -> int -> error) ->
+      ('a -> 'b -> (unit, error Error.t) result) ->
+      'a list ->
+      'b list ->
+      (unit, error Error.t) result
+  end
+
   module Error : sig
     val make : ?pos:Source.pos -> error -> error Error.t
     val map_kind : ?pos:Source.pos -> ('e -> error) -> 'e Error.t -> error Error.t
     val pp : Format.formatter -> error Error.t -> unit
     val pp_kind : Format.formatter -> error Error.t -> unit
   end
-end
-
-(* Every operation here is its unbound counterpart with [D.pp_error] supplied, so
-   values built through the functor and values built directly are the same
-   values. Only operations that take a printer appear; the rest stay in [Err]. *)
-module Make (D : Domain) : S with type error = D.error = struct
-  type error = D.error
-
-  let pp_error = D.pp_error
-  let pp pp_value ppf result = pp pp_value D.pp_error ppf result
-  let fail ?pos kind = fail ?pos ~pp_error:D.pp_error kind
-  let of_option ?pos kind option = of_option ?pos ~pp_error:D.pp_error kind option
-  let map_none ?pos ~error option = map_none ?pos ~pp_error:D.pp_error ~error option
-  let guard ?pos ~error condition = guard ?pos ~pp_error:D.pp_error ~error condition
-  let map_error ?pos f result = map_error ?pos ~pp_error:D.pp_error f result
-  let mark_error ?pos action result = mark_error ?pos ~pp_error:D.pp_error action result
-  let protect ?pos ~catch f = protect ?pos ~pp_error:D.pp_error ~catch f
-  let import ?pos f result = import ?pos ~pp_error:D.pp_error f result
-  let export ?pos result = export ?pos ~pp_error:D.pp_error result
-  let to_exn ?pos error = to_exn ?pos ~pp_error:D.pp_error error
-  let export_exn ?pos result = export_exn ?pos ~pp_error:D.pp_error result
-  let raise_error ?pos error = raise_error ?pos ~pp_error:D.pp_error error
-  let or_raise ?pos result = or_raise ?pos ~pp_error:D.pp_error result
-  let with_escape f = Escape.with_escape f
-  let throw token ?pos kind = Escape.throw token ?pos ~pp_error:D.pp_error kind
-
-  module Error = struct
-    let make ?pos kind = Error.make ?pos ~pp_error:D.pp_error kind
-    let map_kind ?pos f error = Error.map_kind ?pos ~pp_error:D.pp_error f error
-    let pp ppf error = Error.pp D.pp_error ppf error
-    let pp_kind ppf error = Error.pp_kind D.pp_error ppf error
-  end
-end
-
-module Syntax = struct
-  let ( let* ) = bind
-  let ( let+ ) result f = map f result
-  let ( >>= ) = bind
-  let ( >>| ) result f = map f result
 end
 
 module List = struct
@@ -845,6 +948,50 @@ module List = struct
     loop values
 end
 
+(* Every operation here is its unbound counterpart with [D.pp_error] supplied, so
+   values built through the functor and values built directly are the same
+   values. Only operations that take a printer appear; the rest stay in [Err]. *)
+module Make (D : Domain) : S with type error = D.error = struct
+  type error = D.error
+
+  let pp_error = D.pp_error
+  let pp pp_value ppf result = pp pp_value D.pp_error ppf result
+  let fail ?pos kind = fail ?pos ~pp_error:D.pp_error kind
+  let of_option ?pos kind option = of_option ?pos ~pp_error:D.pp_error kind option
+  let map_none ?pos ~error option = map_none ?pos ~pp_error:D.pp_error ~error option
+  let guard ?pos ~error condition = guard ?pos ~pp_error:D.pp_error ~error condition
+  let map_error ?pos f result = map_error ?pos ~pp_error:D.pp_error f result
+  let mark_error ?pos action result = mark_error ?pos ~pp_error:D.pp_error action result
+  let protect ?pos ~catch f = protect ?pos ~pp_error:D.pp_error ~catch f
+  let import ?pos f result = import ?pos ~pp_error:D.pp_error f result
+  let export ?pos result = export ?pos ~pp_error:D.pp_error result
+  let to_exn ?pos error = to_exn ?pos ~pp_error:D.pp_error error
+  let export_exn ?pos result = export_exn ?pos ~pp_error:D.pp_error result
+  let raise_error ?pos error = raise_error ?pos ~pp_error:D.pp_error error
+  let or_raise ?pos result = or_raise ?pos ~pp_error:D.pp_error result
+  let with_escape f = Escape.with_escape f
+  let throw token ?pos kind = Escape.throw token ?pos ~pp_error:D.pp_error kind
+
+  module Error = struct
+    let make ?pos kind = Error.make ?pos ~pp_error:D.pp_error kind
+    let map_kind ?pos f error = Error.map_kind ?pos ~pp_error:D.pp_error f error
+    let pp ppf error = Error.pp D.pp_error ppf error
+    let pp_kind ppf error = Error.pp_kind D.pp_error ppf error
+  end
+
+  module List = struct
+    let map2 ?pos ~unequal_lengths f left right = List.map2 ?pos ~pp_error:D.pp_error ~unequal_lengths f left right
+    let iter2 ?pos ~unequal_lengths f left right = List.iter2 ?pos ~pp_error:D.pp_error ~unequal_lengths f left right
+  end
+end
+
+module Syntax = struct
+  let ( let* ) = bind
+  let ( let+ ) result f = map f result
+  let ( >>= ) = bind
+  let ( >>| ) result f = map f result
+end
+
 module Accum = struct
   type 'e errors = 'e Error.t list
 
@@ -857,8 +1004,11 @@ module Accum = struct
 
   (* The batch wrapper takes no [pp_error]: each element failure already
      dispatched its own observation, with its own domain printer, at its own
-     detection site. *)
-  let collected ?pos errors_rev = Error (Error.make ?pos (Stdlib.List.rev errors_rev))
+     detection site; the wrapper therefore records neither a [Detect] event nor
+     a call stack, only the position of the batch. *)
+  let collected ?pos errors_rev =
+    let origin = Origin.make ?source:(Option.map Source.of_pos pos) () in
+    Error (Error.make_at ~origin (Stdlib.List.rev errors_rev))
 
   let map ?pos f values =
     let rec loop mapped errors_rev = function

@@ -75,4 +75,25 @@ let () =
           (fun () -> measure_under monitored ~iterations map_monitored)
       in
       less "monitor dispatch costs more than an unmatched registry" without_monitors with_monitors;
+      let trail = config ~actions:(Action.Set.of_list [ Action.Map ]) ~backtrace:Config.Never ~max_events:128 in
+      let with_trail length =
+        Config.set trail;
+        let result = ref (Error base_error) in
+        for _ = 1 to length do
+          result := mark_error Action.Map !result
+        done;
+        let result = !result in
+        measure_under trail ~iterations (fun () -> ignore (map_error Fun.id result))
+      in
+      equal "an unmonitored event does not pay for the length of the trail"
+        [ with_trail 1; with_trail 8; with_trail 100 ];
+      let unmatched_handles =
+        Stdlib.List.init 3 (fun _ -> Monitor.install ~actions:(Action.Set.of_list [ Action.Filter ]) (fun _ -> ()))
+      in
+      let with_unmatched =
+        Fun.protect
+          ~finally:(fun () -> Stdlib.List.iter (fun handle -> ignore (Monitor.remove handle)) unmatched_handles)
+          (fun () -> measure_under monitored ~iterations map_monitored)
+      in
+      equal "monitors that do not match the action cost nothing" [ without_monitors; with_unmatched ];
       print_endline "allocation invariants: ok")

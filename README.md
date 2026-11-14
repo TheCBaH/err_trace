@@ -41,7 +41,10 @@ opam install err_trace
 ```
 
 Melange projects install `err_trace-melange` instead and name that library
-(`err_trace-melange`); it provides the same `Err` module.
+(`err_trace-melange`); it provides the same `Err` module. That package builds
+the Melange library only when `ERR_TRACE_MELANGE=true` is set, which its opam
+file does; a checkout built without it skips the library, so set the variable
+when building `err_trace-melange` from source.
 
 Add `err_trace` to the `libraries` field of your Dune stanza, then use `Err`.
 The library itself only depends on the OCaml standard library and supports OCaml
@@ -267,7 +270,7 @@ blocks against the library, so runnable examples stay correct. Blocks that
 aren't meant to run (shell commands, fragments referencing a hypothetical
 caller-defined module) are marked `<!-- $MDX skip -->`.
 
-Core work needs only Dune and the OCaml formatter:
+Core work needs Dune, the OCaml formatter, `ppx_expect` and `mdx`:
 
 <!-- $MDX skip -->
 ```sh

@@ -318,7 +318,11 @@ max_external_bytes : int
 
 All limits are validated as non-negative and no greater than `0x3fff_ffff`, so a
 configuration accepted on a 64-bit runtime is representable on a 32-bit OCaml
-runtime. A stack is truncated before it enters an error value.
+runtime. A stack is truncated before it enters an error value: `capture` asks
+the runtime for at most `max_frames` frames, and `protect` cuts the caught
+stack to `max_frames` slots after the classifier claims the exception (an
+unclaimed exception is re-raised with its full original trace). A cut stack has
+no `raw_backtrace` form, so `Stack.to_raw_backtrace` returns `None` for it.
 
 ### Typed configuration errors
 
@@ -1534,7 +1538,9 @@ stable. The cases are:
 Native stack text never appears in a golden. Frame names, inlining, paths, and
 JavaScript engine formatting are not stable, so provenance tests assert
 structural properties (`Origin.source`/`Origin.stack` presence, event names,
-counts) and printer tests assert only the library's own framing.
+counts) and printer tests assert only the library's own framing. Rendered native
+stack text is checked by properties only: no empty line, no `Raised`/`Called`
+runtime wording, and a first frame outside `err.ml`.
 
 ### Format composition tests
 

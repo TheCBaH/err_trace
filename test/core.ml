@@ -1129,3 +1129,387 @@ let%expect_test "Escape.map narrows a caller token and shares its lifetime" =
           try Escape.throw token (`Narrow 8)
           with Escape.Escaped_after_exit _ -> print_endline (Format.asprintf "%a" Escape.pp token)));
       [%expect {| exited |}])
+
+let%expect_test "protect and import record events under the configuration read at entry" =
+  let no_catch = make_config ~actions:(Action.Set.of_list [ Action.Detect ]) () in
+  with_config no_catch (fun () ->
+      let caught =
+        protect
+          ~catch:(fun _ ->
+            Config.set Config.debug;
+            Some "caught")
+          (fun () -> failwith "boom")
+        |> get_error
+      in
+      print_endline ("[" ^ action_names caught ^ "]");
+      [%expect "[]"]);
+  let no_import = make_config ~actions:(Action.Set.of_list [ Action.Detect ]) () in
+  with_config no_import (fun () ->
+      let imported =
+        import
+          (fun kind ->
+            Config.set Config.debug;
+            kind)
+          (Error "bare")
+        |> get_error
+      in
+      print_endline ("[" ^ action_names imported ^ "]");
+      [%expect "[]"])
+
+let%expect_test "an accumulated batch dispatches one Detect per element failure" =
+  with_config (make_config ~backtrace:Config.Origin ()) (fun () ->
+      let detected = ref 0 in
+      let handle = Monitor.install ~actions:(Action.Set.of_list [ Action.Detect ]) (fun _ -> incr detected) in
+      let result = Accum.map ~pos:__POS__ (fun value -> fail (`Even value)) [ 2; 4; 6 ] in
+      ignore (Monitor.remove handle);
+      Printf.printf "%d\n" !detected;
+      [%expect "3"];
+      let wrapper = get_error result in
+      print_endline (action_names wrapper);
+      [%expect ""];
+      let origin = Option.get (Error.origin wrapper) in
+      print_bool (Origin.source origin <> None && Origin.stack origin = None);
+      [%expect "true"])
+
+let%expect_test "of_strings parses limits by hand and accepts groups in trace lists" =
+  let describe = function
+    | Ok parsed -> Format.asprintf "%a / %d" Action.Set.pp (Config.actions parsed) (Config.max_events parsed)
+    | Error error -> (
+        match Error.kind error with
+        | `Limit_too_large _ -> "too large"
+        | `Negative_limit _ -> "negative"
+        | kind -> Format.asprintf "%a" Config.pp_of_strings_error kind)
+  in
+  let parse ?trace ?max_events () =
+    describe (Config.of_strings ~trace ~backtrace:None ~max_events ~max_frames:None ~max_external_bytes:None)
+  in
+  Stdlib.List.iter
+    (fun value -> Printf.printf "%S: %s\n" value (parse ~max_events:value ()))
+    [
+      "7"; " 7 "; "-1"; "1073741824"; "99999999999999999999"; "-99999999999999999999"; "0x10"; "0b11"; "1_000"; ""; "-";
+    ];
+  [%expect
+    {|
+    "7": map, filter, catch, raise, import, export / 7
+    " 7 ": map, filter, catch, raise, import, export / 7
+    "-1": negative
+    "1073741824": too large
+    "99999999999999999999": too large
+    "-99999999999999999999": negative
+    "0x10": max_events must be an integer (got "0x10")
+    "0b11": max_events must be an integer (got "0b11")
+    "1_000": max_events must be an integer (got "1_000")
+    "": max_events must be an integer (got "")
+    "-": max_events must be an integer (got "-")
+    |}];
+  Stdlib.List.iter
+    (fun value -> Printf.printf "%S: %s\n" value (parse ~trace:value ()))
+    [ "boundaries,detect"; "map,all"; "off,map"; ""; "map,,filter"; ",map" ];
+  [%expect
+    {|
+    "boundaries,detect": detect, map, filter, catch, raise, import, export / 32
+    "map,all": detect, map, filter, catch, raise, import, export / 32
+    "off,map": map / 32
+    "": map, filter, catch, raise, import, export / 32
+    "map,,filter": empty trace action at position 2
+    ",map": empty trace action at position 1
+    |}]
+
+let%expect_test "external stacks are cut at a line break or a UTF-8 boundary" =
+  let render ~limit stack =
+    with_config (make_config ~max_external_bytes:limit ()) (fun () ->
+        let stack = Stack.of_external ~runtime:"JS" ~stack in
+        Printf.printf "%S\n" (Format.asprintf "%a" Stack.pp stack))
+  in
+  render ~limit:3 "ab\xe2\x82\xaccd";
+  render ~limit:4 "ab\xe2\x82\xaccd";
+  render ~limit:5 "ab\xe2\x82\xaccd";
+  render ~limit:6 "aa\nbbbbbbbb";
+  render ~limit:8 "aa\nbb\nccccccc";
+  render ~limit:2 "\xe2\x82\xaccd";
+  [%expect
+    {|
+    "JS stack:\nab\n[truncated]"
+    "JS stack:\nab\n[truncated]"
+    "JS stack:\nab\226\130\172\n[truncated]"
+    "JS stack:\naa\n[truncated]"
+    "JS stack:\naa\nbb\n[truncated]"
+    "stack unavailable"
+    |}]
+
+let%expect_test "action sets can be edited and listed" =
+  let names set = String.concat "," (Stdlib.List.map (Format.asprintf "%a" Action.pp) (Action.Set.to_list set)) in
+  let set = Action.Set.(empty |> add Action.Raise |> add Action.Detect |> add Action.Raise) in
+  print_endline (names set);
+  [%expect "detect,raise"];
+  print_endline (names (Action.Set.remove Action.Raise (Action.Set.remove Action.Map set)));
+  [%expect "detect"];
+  print_endline (names (Action.Set.union set (Action.Set.of_list [ Action.Export; Action.Map ])));
+  [%expect "detect,map,raise,export"];
+  print_bool (Action.Set.equal Action.Set.boundaries (Action.Set.remove Action.Detect Action.Set.all));
+  print_bool (Action.Set.equal Action.Set.empty set);
+  [%expect {|
+    true
+    false |}]
+
+let%expect_test "throw_error and or_throw locate a throw after the frame returned" =
+  with_config (make_config ()) (fun () ->
+      let leaked = ref None in
+      let _ : (unit, [ `Gone ]) t = Escape.with_escape (fun token -> leaked := Some token) in
+      let token = Option.get !leaked in
+      let failure : (unit, [ `Gone ]) t = fail `Gone in
+      let located raise_it =
+        try
+          raise_it ();
+          "no raise"
+        with
+        | Escape.Escaped_after_exit (Some source) -> Format.asprintf "%a" Source.pp source
+        | Escape.Escaped_after_exit None -> "none"
+      in
+      print_endline (located (fun () -> Escape.throw_error ~pos:("after.ml", 3, 1, 5) token (get_error failure)));
+      print_endline (located (fun () -> Escape.or_throw ~pos:("after.ml", 4, 1, 5) token failure));
+      print_endline (located (fun () -> Escape.or_throw token failure));
+      [%expect {|
+        after.ml:3:1-5
+        after.ml:4:1-5
+        none
+        |}])
+
+let%expect_test "protect retains at most max_frames of the caught stack" =
+  Printexc.record_backtrace true;
+  let rec deep n = if n = 0 then failwith "boom" else 1 + deep (n - 1) in
+  let claim = function Failure message -> Some message | _ -> None in
+  let retained ~backtrace ~max_frames =
+    with_config (make_config ~backtrace ~max_frames ()) (fun () ->
+        let error = get_error (protect ~catch:claim (fun () -> deep 5)) in
+        match Option.bind (Error.origin error) Origin.stack with
+        | None -> None
+        | Some stack ->
+            let lines =
+              String.split_on_char '\n' (Format.asprintf "%a" Stack.pp stack) |> Stdlib.List.filter (( <> ) "")
+            in
+            let truncated = Stdlib.List.mem "[truncated]" lines in
+            Some
+              ((Stdlib.List.length lines - if truncated then 1 else 0), truncated, Stack.to_raw_backtrace stack <> None))
+  in
+  (* Frame counts and availability differ between bytecode and native, so every
+     assertion is relative to the unbounded stack. *)
+  let full = retained ~backtrace:Config.Origin ~max_frames:64 in
+  let full_frames = match full with Some (frames, _, _) -> frames | None -> 0 in
+  print_bool (match full with Some (_, truncated, raw) -> (not truncated) && raw | None -> true);
+  print_bool (retained ~backtrace:Config.Origin ~max_frames:0 = None);
+  Stdlib.List.iter
+    (fun backtrace ->
+      print_bool
+        (match retained ~backtrace ~max_frames:1 with
+        | None -> full = None
+        | Some (frames, truncated, raw) -> frames <= 1 && truncated = (full_frames > 1) && raw = not truncated))
+    [ Config.Origin; Config.Events ];
+  [%expect {|
+    true
+    true
+    true
+    true |}];
+  with_config (make_config ~backtrace:Config.Origin ~max_frames:1 ()) (fun () ->
+      match protect ~catch:(fun _ -> None) (fun () -> deep 5) with
+      | exception Failure _ -> print_bool (Printexc.raw_backtrace_length (Printexc.get_raw_backtrace ()) >= full_frames)
+      | _ -> print_endline "not raised");
+  [%expect {| true |}]
+
+let%expect_test "native stacks render from slots without runtime wording" =
+  Printexc.record_backtrace true;
+  let has_prefix prefix line =
+    String.length line >= String.length prefix && String.sub line 0 (String.length prefix) = prefix
+  in
+  let mentions_err_ml line =
+    let needle = "err.ml" in
+    let rec from index =
+      index + String.length needle <= String.length line
+      && (String.sub line index (String.length needle) = needle || from (index + 1))
+    in
+    from 0
+  in
+  with_config (make_config ~backtrace:Config.Origin ~max_frames:32 ()) (fun () ->
+      let error = get_error (fail "no position") in
+      match Option.bind (Error.origin error) Origin.stack with
+      | None -> print_endline "no stack"
+      | Some stack ->
+          let lines = String.split_on_char '\n' (Format.asprintf "%a" Stack.pp stack) in
+          (* Without frames on this runtime the whole text is "stack unavailable". *)
+          let available = Stack.is_available stack in
+          print_bool ((not available) || not (Stdlib.List.mem "" lines));
+          print_bool
+            ((not available)
+            || not (Stdlib.List.exists (fun line -> has_prefix "Raised" line || has_prefix "Called" line) lines));
+          print_bool ((not available) || not (mentions_err_ml (Stdlib.List.hd lines))));
+  [%expect {|
+    true
+    true
+    true
+    |}]
+
+let%expect_test "a bound domain offers the length-checked list traversals" =
+  with_config (make_config ()) (fun () ->
+      let unequal left right = `Missing_item ((left * 10) + right) in
+      let show = function
+        | Ok values -> String.concat "," (Stdlib.List.map string_of_int values)
+        | Error error -> Format.asprintf "%a" Bound.Error.pp error
+      in
+      print_endline (show (Bound.List.map2 ~unequal_lengths:unequal (fun a b -> Ok (a + b)) [ 1; 2 ] [ 10; 20 ]));
+      print_endline (show (Bound.List.map2 ~unequal_lengths:unequal (fun a b -> Ok (a + b)) [ 1; 2 ] [ 10 ]));
+      print_endline
+        (match Bound.List.iter2 ~unequal_lengths:unequal (fun _ _ -> Ok ()) [ 1 ] [] with
+        | Ok () -> "ok"
+        | Error error -> Format.asprintf "%a" Bound.Error.pp error);
+      [%expect
+        {|
+        11,22
+        storage item 21 is missing
+        trace:
+          detected
+        storage item 10 is missing
+        trace:
+          detected
+        |}])
+
+let%expect_test "every action set, backtrace mode and limit round-trips through of_strings" =
+  let all = [ Action.Detect; Action.Map; Action.Filter; Action.Catch; Action.Raise; Action.Import; Action.Export ] in
+  let checked = ref 0 and mismatched = ref 0 in
+  for mask = 0 to 127 do
+    let actions = Action.Set.of_list (Stdlib.List.filteri (fun index _ -> mask land (1 lsl index) <> 0) all) in
+    Stdlib.List.iter
+      (fun backtrace ->
+        Stdlib.List.iter
+          (fun limit ->
+            let config =
+              make_config ~actions ~backtrace ~max_events:(min limit 4096) ~max_frames:(limit / 2)
+                ~max_external_bytes:(limit + 1) ()
+            in
+            let text = Format.asprintf "%a" Config.pp config in
+            let reparsed =
+              Config.of_strings
+                ~trace:(Some (Format.asprintf "%a" Action.Set.pp actions))
+                ~backtrace:(Some (Format.asprintf "%a" Config.pp_backtrace backtrace))
+                ~max_events:(Some (string_of_int (min limit 4096)))
+                ~max_frames:(Some (string_of_int (limit / 2)))
+                ~max_external_bytes:(Some (string_of_int (limit + 1)))
+            in
+            incr checked;
+            match reparsed with
+            | Ok parsed when Format.asprintf "%a" Config.pp parsed = text -> ()
+            | Ok _ | Error _ -> incr mismatched)
+          [ 0; 1; 4096; max_int / 4 land 0x3fff_fffe ])
+      [ Config.Never; Config.Origin; Config.Events ]
+  done;
+  Printf.printf "%d checked, %d mismatched\n" !checked !mismatched;
+  [%expect {| 1536 checked, 0 mismatched |}]
+
+let%expect_test "a disabled action still maps the payload but changes nothing else" =
+  with_config Config.fast (fun () ->
+      let failure : (unit, string) t = fail "abc" in
+      (match map_error String.length failure with
+      | Error error -> Printf.printf "%d [%s]\n" (Error.kind error) (action_names error)
+      | Ok () -> print_endline "ok");
+      [%expect {| 3 [] |}];
+      print_bool (get_error (mark_error Action.Map failure) == get_error failure);
+      [%expect {| true |}])
+
+let%expect_test "accessors expose the pieces of positions, external stacks and packed errors" =
+  let pos = ("accessor.ml", 3, 4, 9) in
+  print_bool (Source.to_pos (Source.of_pos pos) = pos);
+  with_config (make_config ~max_external_bytes:5 ()) (fun () ->
+      (match Stack.to_external (Stack.of_external ~runtime:"JavaScript" ~stack:"abcdefghi") with
+      | Some (runtime, stack, truncated) -> Printf.printf "%s %S %b\n" runtime stack truncated
+      | None -> print_endline "native");
+      print_bool (Stack.to_external (Stack.of_raw_backtrace (Printexc.get_callstack 1)) = None));
+  with_config (make_config ~max_events:1 ()) (fun () ->
+      let error = get_error (map_error ~pos (fun kind -> kind ^ "!") (fail ~pos "boom")) in
+      match to_exn ~pp_error:Format.pp_print_string error with
+      | Exn.E packed ->
+          Printf.printf "%b %d %d\n"
+            (Exn.origin packed <> None)
+            (Stdlib.List.length (Exn.events packed))
+            (Exn.dropped_events packed)
+      | _ -> print_endline "not packed");
+  [%expect {|
+    true
+    JavaScript "abcde" true
+    true
+    true 1 2
+    |}]
+
+let%expect_test "max_events is capped so the trail stays bounded" =
+  let make max_events =
+    match
+      Config.make ~actions:Action.Set.all ~backtrace:Config.Never ~max_events ~max_frames:0 ~max_external_bytes:0
+    with
+    | Ok config -> Printf.sprintf "ok %d" (Config.max_events config)
+    | Error error -> Format.asprintf "%a" Config.pp_make_error (Error.kind error)
+  in
+  Stdlib.List.iter (fun value -> print_endline (make value)) [ 4096; 4097; 0x3fff_ffff ];
+  [%expect
+    {|
+    ok 4096
+    max_events must be at most 4096 (got 4097)
+    max_events must be at most 4096 (got 1073741823)
+    |}];
+  let parsed =
+    Config.of_strings ~trace:None ~backtrace:None ~max_events:(Some "4097") ~max_frames:None ~max_external_bytes:None
+  in
+  print_bool
+    (match parsed with
+    | Error error -> ( match Error.kind error with `Limit_too_large _ -> true | _ -> false)
+    | Ok _ -> false);
+  [%expect {| true |}]
+
+let%expect_test "trail invariants hold across random operations and policy changes" =
+  let rng = Random.State.make [| 20261114 |] in
+  let actions =
+    [| Action.Detect; Action.Map; Action.Filter; Action.Catch; Action.Raise; Action.Import; Action.Export |]
+  in
+  let random_config () =
+    let selected = Stdlib.List.filter (fun _ -> Random.State.bool rng) (Array.to_list actions) in
+    make_config ~actions:(Action.Set.of_list selected) ~max_events:(Random.State.int rng 9) ()
+  in
+  let violations = ref 0 and checked = ref 0 in
+  let check ok =
+    incr checked;
+    if not ok then incr violations
+  in
+  let original = Config.get () in
+  Fun.protect
+    ~finally:(fun () -> Config.set original)
+    (fun () ->
+      for _ = 1 to 300 do
+        (* One error lives through a run of operations; the policy changes between them. *)
+        let config = ref (random_config ()) in
+        Config.set !config;
+        let current = ref (fail "start" |> get_error) in
+        let origin = Error.origin !current in
+        let enabled = ref (if Action.Set.mem Action.Detect (Config.actions !config) then 1 else 0) in
+        let last_max = ref (Config.max_events !config) in
+        for _ = 1 to 30 do
+          let before = !current in
+          (match Random.State.int rng 3 with
+          | 0 ->
+              config := random_config ();
+              Config.set !config;
+              check (!current == before)
+          | _ ->
+              let action = actions.(Random.State.int rng (Array.length actions)) in
+              let on = Action.Set.mem action (Config.actions !config) in
+              current := get_error (mark_error action (Error !current));
+              if on then begin
+                incr enabled;
+                last_max := Config.max_events !config
+              end
+              else check (!current == before));
+          let retained = Stdlib.List.length (Error.events !current) in
+          check (Error.origin !current == origin);
+          check (retained + Error.dropped_events !current = !enabled);
+          check (!enabled = 0 || retained <= !last_max)
+        done
+      done);
+  (* The number of checks depends on the Random algorithm of the compiler. *)
+  Printf.printf "many checks: %b, violations: %d\n" (!checked > 10_000) !violations;
+  [%expect {| many checks: true, violations: 0 |}]
