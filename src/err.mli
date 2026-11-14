@@ -10,6 +10,9 @@ module Source : sig
   val of_pos : pos -> t
   (** Build a source coordinate from OCaml's [__POS__] value. *)
 
+  val to_pos : t -> pos
+  (** The [__POS__] value this coordinate was built from. *)
+
   val pp_pos : Format.formatter -> pos -> unit
   (** Print an unwrapped [__POS__] value. *)
 
@@ -33,6 +36,10 @@ module Stack : sig
       This serves one narrow case: a JavaScript host that hands your program its own stack, which an adapter imports
       rather than captures. A library or a command-line program never calls it, and can ignore this constructor,
       {!is_available}, and the [max_external_bytes] limit entirely. *)
+
+  val to_external : t -> (string * string * bool) option
+  (** [Some (runtime, stack, truncated)] for a stack built by {!of_external}, with [stack] as retained after bounding,
+      and [None] for a native stack. *)
 
   val is_available : t -> bool
   (** Whether this stack contains available diagnostic data. *)
@@ -465,6 +472,15 @@ module Exn : sig
 
   val pp : Format.formatter -> packed -> unit
   (** Render a packed error. *)
+
+  val origin : packed -> Origin.t option
+  (** Where the carried error was created, as {!Error.origin}. *)
+
+  val events : packed -> Event.t list
+  (** The retained trail, oldest first, as {!Error.events}. *)
+
+  val dropped_events : packed -> int
+  (** Events not retained, as {!Error.dropped_events}. *)
 
   val pp_kind : Format.formatter -> packed -> unit
   (** Render only the domain payload, omitting origin and events. Use at a boundary that must not emit provenance -- a

@@ -1413,3 +1413,27 @@ let%expect_test "a disabled action still maps the payload but changes nothing el
       [%expect {| 3 [] |}];
       print_bool (get_error (mark_error Action.Map failure) == get_error failure);
       [%expect {| true |}])
+
+let%expect_test "accessors expose the pieces of positions, external stacks and packed errors" =
+  let pos = ("accessor.ml", 3, 4, 9) in
+  print_bool (Source.to_pos (Source.of_pos pos) = pos);
+  with_config (make_config ~max_external_bytes:5 ()) (fun () ->
+      (match Stack.to_external (Stack.of_external ~runtime:"JavaScript" ~stack:"abcdefghi") with
+      | Some (runtime, stack, truncated) -> Printf.printf "%s %S %b\n" runtime stack truncated
+      | None -> print_endline "native");
+      print_bool (Stack.to_external (Stack.of_raw_backtrace (Printexc.get_callstack 1)) = None));
+  with_config (make_config ~max_events:1 ()) (fun () ->
+      let error = get_error (map_error ~pos (fun kind -> kind ^ "!") (fail ~pos "boom")) in
+      match to_exn ~pp_error:Format.pp_print_string error with
+      | Exn.E packed ->
+          Printf.printf "%b %d %d\n"
+            (Exn.origin packed <> None)
+            (Stdlib.List.length (Exn.events packed))
+            (Exn.dropped_events packed)
+      | _ -> print_endline "not packed");
+  [%expect {|
+    true
+    JavaScript "abcde" true
+    true
+    true 1 2
+    |}]

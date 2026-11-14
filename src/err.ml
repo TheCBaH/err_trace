@@ -3,6 +3,7 @@ module Source = struct
   type t = { file : string; line : int; start_column : int; end_column : int }
 
   let of_pos (file, line, start_column, end_column) = { file; line; start_column; end_column }
+  let to_pos t = (t.file, t.line, t.start_column, t.end_column)
   let pp ppf t = Format.fprintf ppf "%s:%d:%d-%d" t.file t.line t.start_column t.end_column
   let pp_pos ppf pos = pp ppf (of_pos pos)
 end
@@ -156,6 +157,10 @@ module Stack = struct
     | External { stack; _ } -> stack <> ""
 
   let to_raw_backtrace = function Raw backtrace -> Some backtrace | Slots _ | External _ -> None
+
+  let to_external = function
+    | External { runtime; stack; truncated } -> Some (runtime, stack, truncated)
+    | Raw _ | Slots _ -> None
 
   let pp_lines ppf text =
     match String.split_on_char '\n' text with
@@ -775,6 +780,9 @@ module Exn = struct
      developer diagnostic, so it would either ship the source's own frames
      outward or re-derive the payload printer it has already been handed. *)
   let pp_kind ppf (Pack (error, pp_error)) = pp_error ppf (Error.kind error)
+  let origin (Pack (error, _)) = Error.origin error
+  let events (Pack (error, _)) = Error.events error
+  let dropped_events (Pack (error, _)) = Error.dropped_events error
   let printer = function E packed -> Some (Format.asprintf "%a" pp packed) | _ -> None
   let () = Printexc.register_printer printer
 end
