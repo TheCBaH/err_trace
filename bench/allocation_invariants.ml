@@ -87,4 +87,13 @@ let () =
       in
       equal "an unmonitored event does not pay for the length of the trail"
         [ with_trail 1; with_trail 8; with_trail 100 ];
+      let unmatched_handles =
+        Stdlib.List.init 3 (fun _ -> Monitor.install ~actions:(Action.Set.of_list [ Action.Filter ]) (fun _ -> ()))
+      in
+      let with_unmatched =
+        Fun.protect
+          ~finally:(fun () -> Stdlib.List.iter (fun handle -> ignore (Monitor.remove handle)) unmatched_handles)
+          (fun () -> measure_under monitored ~iterations map_monitored)
+      in
+      equal "monitors that do not match the action cost nothing" [ without_monitors; with_unmatched ];
       print_endline "allocation invariants: ok")

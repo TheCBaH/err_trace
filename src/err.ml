@@ -333,13 +333,14 @@ module Monitor = struct
   type t = entry
   type callback = Observation.t -> unit
 
+  (* In installation order, so dispatch needs no reversal. *)
   let registry : entry list Atomic.t = Atomic.make []
 
   let install ?(actions = Action.Set.all) ?(on_error = fun _ _ -> ()) callback =
     let entry = { active = Atomic.make true; actions; callback; on_error } in
     let rec add () =
       let previous = Atomic.get registry in
-      if not (Atomic.compare_and_set registry previous (entry :: previous)) then add ()
+      if not (Atomic.compare_and_set registry previous (previous @ [ entry ])) then add ()
     in
     add ();
     entry
@@ -365,24 +366,29 @@ module Monitor = struct
         let stack = Stack.of_raw_backtrace (Printexc.get_raw_backtrace ()) in
         if Stack.is_available stack then Some stack else None
 
+  let matches action entry = Atomic.get entry.active && Action.Set.mem action entry.actions
+
+  let rec any_matches action = function
+    | [] -> false
+    | entry :: entries -> matches action entry || any_matches action entries
+
+  (* The monitors that match are fixed when dispatch starts: one removed by an
+     earlier callback of this dispatch is still called, and an event nobody
+     matches costs a scan and no allocation. *)
   let dispatch action make_observation =
-    let entries =
-      Atomic.get registry
-      |> List.filter (fun entry -> Atomic.get entry.active && Action.Set.mem action entry.actions)
-      |> List.rev
-    in
-    match entries with
-    | [] -> ()
-    | _ ->
-        let observation = make_observation () in
-        List.iter
-          (fun entry ->
-            try entry.callback observation
-            with exn -> (
-              let stack = callback_stack () in
-              ignore (remove entry);
-              try entry.on_error exn stack with _ -> ()))
-          entries
+    let installed = Atomic.get registry in
+    if any_matches action installed then begin
+      let entries = List.filter (matches action) installed in
+      let observation = make_observation () in
+      List.iter
+        (fun entry ->
+          try entry.callback observation
+          with exn -> (
+            let stack = callback_stack () in
+            ignore (remove entry);
+            try entry.on_error exn stack with _ -> ()))
+        entries
+    end
 end
 
 module Error = struct
