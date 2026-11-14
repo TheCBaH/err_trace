@@ -569,8 +569,8 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
       [%expect {| storage item 7 is missing |}];
       (* The bound domain produces exactly [Printer_storage.error]. It is the
          same value the raw call produces: only the printer is pre-supplied. *)
-      let bound : (int, Printer_storage.error) Err.t = Bound.fail ~pos:__POS__ (`Missing_item 7) in
-      let raw = fail ~pos:__POS__ ~pp_error:Printer_storage.pp_error (`Missing_item 7) in
+      let bound : (int, Printer_storage.error) Err.t = Bound.fail ~pos:("fixture.ml", 572, 71, 78) (`Missing_item 7) in
+      let raw = fail ~pos:("fixture.ml", 573, 26, 33) ~pp_error:Printer_storage.pp_error (`Missing_item 7) in
       print_endline (Format.asprintf "%a" Bound.Error.pp (get_error bound));
       print_endline (Format.asprintf "%a" (Error.pp Printer_storage.pp_error) (get_error raw));
       print_endline (Format.asprintf "%a" Bound.Error.pp_kind (get_error bound));
@@ -578,14 +578,14 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
         {|
         storage item 7 is missing
         detected at:
-          test/core.ml:572:71-78
+          fixture.ml:572:71-78
         trace:
-          detected at test/core.ml:572:71-78
+          detected at fixture.ml:572:71-78
         storage item 7 is missing
         detected at:
-          test/core.ml:573:26-33
+          fixture.ml:573:26-33
         trace:
-          detected at test/core.ml:573:26-33
+          detected at fixture.ml:573:26-33
         storage item 7 is missing
         |}];
       (* [Error.t] is covariant, so a bound value still widens by coercion. This
@@ -598,7 +598,7 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
       [%expect {| storage item 7 is missing |}];
       (* The bound domain covers the operations whose printer is mandatory. *)
       print_bool (Bound.or_raise (return 4) = 4);
-      (match Bound.export_exn (Bound.fail ~pos:__POS__ (`Offline "storage")) with
+      (match Bound.export_exn (Bound.fail ~pos:("fixture.ml", 601, 47, 54) (`Offline "storage")) with
       | Ok _ -> print_endline "unexpected"
       | Error exn -> print_endline (Printexc.to_string exn));
       [%expect
@@ -606,9 +606,9 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
         true
         storage is offline
         detected at:
-          test/core.ml:601:47-54
+          fixture.ml:601:47-54
         trace:
-          detected at test/core.ml:601:47-54
+          detected at fixture.ml:601:47-54
           exported
         |}])
 
@@ -617,7 +617,7 @@ let%expect_test "accumulation reports every failure with its own origin" =
       let visited = ref [] in
       let check value =
         visited := value :: !visited;
-        if value mod 2 = 0 then fail ~pos:__POS__ (`Even value) else return (value * 10)
+        if value mod 2 = 0 then fail ~pos:("fixture.ml", 620, 42, 49) (`Even value) else return (value * 10)
       in
       let result = Accum.map ~pos:__POS__ check [ 1; 2; 3; 4 ] in
       (* Every element runs, unlike Err.List.map which stops at the first error. *)
@@ -629,14 +629,14 @@ let%expect_test "accumulation reports every failure with its own origin" =
         1,2,3,4
         2 is even
         detected at:
-          test/core.ml:620:42-49
+          fixture.ml:620:42-49
         trace:
-          detected at test/core.ml:620:42-49
+          detected at fixture.ml:620:42-49
         4 is even
         detected at:
-          test/core.ml:620:42-49
+          fixture.ml:620:42-49
         trace:
-          detected at test/core.ml:620:42-49
+          detected at fixture.ml:620:42-49
         |}];
       (* Each failure keeps its own origin, so a report can point at each one. *)
       let origins =
@@ -648,7 +648,7 @@ let%expect_test "accumulation reports every failure with its own origin" =
             | None -> "-")
       in
       print_endline (String.concat " " origins);
-      [%expect {| test/core.ml:620:42-49 test/core.ml:620:42-49 |}];
+      [%expect {| fixture.ml:620:42-49 fixture.ml:620:42-49 |}];
       print_endline
         (match Accum.map ~pos:__POS__ check [ 1; 3 ] with
         | Ok values -> String.concat "," (Stdlib.List.map string_of_int values)
@@ -729,11 +729,12 @@ let%expect_test "escape exits its own frame and cannot cross a nested one" =
       | None -> print_endline "unreachable"
       | Some token -> (
           print_endline (Format.asprintf "%a" Escape.pp token);
-          try ignore (Escape.throw token ~pos:__POS__ (`Bad 5)) with exn -> print_endline (Printexc.to_string exn)));
+          try ignore (Escape.throw token ~pos:("fixture.ml", 732, 46, 53) (`Bad 5))
+          with exn -> print_endline (Printexc.to_string exn)));
       [%expect
         {|
         exited
-        Err.Escape.throw called after its with_escape call returned (at test/core.ml:732:46-53)
+        Err.Escape.throw called after its with_escape call returned (at fixture.ml:732:46-53)
         |}];
       (* Deep recursion is the reason this exists: no result is threaded. *)
       let deep =
@@ -766,7 +767,9 @@ let%expect_test "boundary helpers mark exactly one action" =
         boom:detect,export
         |}];
       (* import lifts a third-party result and records Import, not Detect. *)
-      let imported = import ~pos:__POS__ (fun message -> `Decode message) (Stdlib.Error "bad json") in
+      let imported =
+        import ~pos:("fixture.ml", 769, 33, 40) (fun message -> `Decode message) (Stdlib.Error "bad json")
+      in
       let error = get_error imported in
       Printf.printf "%s|%s|%s\n"
         (match Error.kind error with `Decode message -> message)
@@ -778,7 +781,7 @@ let%expect_test "boundary helpers mark exactly one action" =
         | None -> "-");
       [%expect {|
         bad json|import|import
-        test/core.ml:769:33-40
+        fixture.ml:769:33-40
         |}];
       print_endline
         (match import ~pos:__POS__ (fun message -> `Decode message) (Stdlib.Ok 3) with
@@ -943,7 +946,7 @@ let%expect_test "two-list and predicate traversals" =
          what lets this subsume the length check that precedes a List.combine. *)
       let mismatch_calls = ref 0 in
       let mismatch =
-        List.map2 ~pos:__POS__ ~unequal_lengths
+        List.map2 ~pos:("fixture.ml", 946, 23, 30) ~unequal_lengths
           (fun value _ ->
             incr mismatch_calls;
             fail (`Bad value))
@@ -958,7 +961,7 @@ let%expect_test "two-list and predicate traversals" =
         | None -> "-");
       [%expect {|
         0|expected 3 arguments, got 1|detect
-        test/core.ml:946:23-30
+        fixture.ml:946:23-30
         |}];
       let visited = ref 0 in
       let iterated =
