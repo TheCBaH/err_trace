@@ -1129,3 +1129,29 @@ let%expect_test "Escape.map narrows a caller token and shares its lifetime" =
           try Escape.throw token (`Narrow 8)
           with Escape.Escaped_after_exit _ -> print_endline (Format.asprintf "%a" Escape.pp token)));
       [%expect {| exited |}])
+
+let%expect_test "protect and import record events under the configuration read at entry" =
+  let no_catch = make_config ~actions:(Action.Set.of_list [ Action.Detect ]) () in
+  with_config no_catch (fun () ->
+      let caught =
+        protect
+          ~catch:(fun _ ->
+            Config.set Config.debug;
+            Some "caught")
+          (fun () -> failwith "boom")
+        |> get_error
+      in
+      print_endline ("[" ^ action_names caught ^ "]");
+      [%expect "[]"]);
+  let no_import = make_config ~actions:(Action.Set.of_list [ Action.Detect ]) () in
+  with_config no_import (fun () ->
+      let imported =
+        import
+          (fun kind ->
+            Config.set Config.debug;
+            kind)
+          (Error "bare")
+        |> get_error
+      in
+      print_endline ("[" ^ action_names imported ^ "]");
+      [%expect "[]"])
