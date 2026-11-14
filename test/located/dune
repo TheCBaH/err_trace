@@ -1,0 +1,25 @@
+; Located.fail without ~pos must not type-check; the same call with ~pos must.
+; "-stop-after typing" writes no files, so the rules need no targets.
+
+(rule
+ (alias runtest)
+ (deps
+  with_pos.ml
+  (glob_files %{project_root}/src/.err_trace.objs/byte/*.cmi))
+ (action
+  (run
+   %{ocamlc}
+   -stop-after
+   typing
+   -I
+   %{project_root}/src/.err_trace.objs/byte
+   with_pos.ml)))
+
+(rule
+ (alias runtest)
+ (deps
+  missing_pos.ml
+  (glob_files %{project_root}/src/.err_trace.objs/byte/*.cmi))
+ (action
+  (system
+   "! %{ocamlc} -stop-after typing -I %{project_root}/src/.err_trace.objs/byte missing_pos.ml 2>/dev/null")))

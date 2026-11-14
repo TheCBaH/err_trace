@@ -61,7 +61,7 @@ end
 
 let%expect_test "configuration presets, parsing, and portable bounds" =
   print_bool (Action.Set.mem Action.Detect (Config.actions Config.debug));
-  print_bool (not (Action.Set.mem Action.Detect (Config.actions Config.default)));
+  print_bool (not (Action.Set.mem Action.Detect (Config.actions Config.with_stacks)));
   print_bool (Config.max_events Config.fast = 0);
   [%expect {|
     true
@@ -416,8 +416,8 @@ let%expect_test "monitor dispatch uses installation-order snapshots" =
       Fun.protect
         ~finally:(fun () -> remove_all [ first; second_handle ])
         (fun () ->
-          ignore (mark_error Action.Map (fail "x"));
-          ignore (mark_error Action.Map (fail "x"));
+          ignore (map_error Fun.id (fail "x"));
+          ignore (map_error Fun.id (fail "x"));
           print_endline (String.concat "," (Stdlib.List.rev !calls));
           [%expect "first,second,first"]))
 
@@ -446,8 +446,8 @@ let%expect_test "monitor filters, zero retention, and failure containment" =
         ~finally:(fun () -> remove_all [ map_monitor; detect_monitor ])
         (fun () ->
           let result = fail "x" in
-          ignore (mark_error Action.Map result);
-          ignore (mark_error Action.Map result);
+          ignore (map_error Fun.id result);
+          ignore (map_error Fun.id result);
           Printf.printf "%d,%d,%d,%d\n" !map_calls !failures !dropped !retained;
           [%expect "1,0,1,0"]))
 
@@ -467,11 +467,11 @@ let%expect_test "callback failure invokes its own hook and cannot replace result
       Fun.protect
         ~finally:(fun () -> ignore (Monitor.remove monitor))
         (fun () ->
-          let result = fail "application" |> mark_error Action.Map in
+          let result = fail "application" |> map_error Fun.id in
           [%expect {|
             Failure("callback failure")
             true |}];
-          ignore (mark_error Action.Map result);
+          ignore (map_error Fun.id result);
           print_endline (Error.kind (get_error result));
           print_int !hook_calls;
           print_newline ();
@@ -569,8 +569,8 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
       [%expect {| storage item 7 is missing |}];
       (* The bound domain produces exactly [Printer_storage.error]. It is the
          same value the raw call produces: only the printer is pre-supplied. *)
-      let bound : (int, Printer_storage.error) Err.t = Bound.fail ~pos:__POS__ (`Missing_item 7) in
-      let raw = fail ~pos:__POS__ ~pp_error:Printer_storage.pp_error (`Missing_item 7) in
+      let bound : (int, Printer_storage.error) Err.t = Bound.fail ~pos:("fixture.ml", 572, 71, 78) (`Missing_item 7) in
+      let raw = fail ~pos:("fixture.ml", 573, 26, 33) ~pp_error:Printer_storage.pp_error (`Missing_item 7) in
       print_endline (Format.asprintf "%a" Bound.Error.pp (get_error bound));
       print_endline (Format.asprintf "%a" (Error.pp Printer_storage.pp_error) (get_error raw));
       print_endline (Format.asprintf "%a" Bound.Error.pp_kind (get_error bound));
@@ -578,14 +578,14 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
         {|
         storage item 7 is missing
         detected at:
-          test/core.ml:572:71-78
+          fixture.ml:572:71-78
         trace:
-          detected at test/core.ml:572:71-78
+          detected at fixture.ml:572:71-78
         storage item 7 is missing
         detected at:
-          test/core.ml:573:26-33
+          fixture.ml:573:26-33
         trace:
-          detected at test/core.ml:573:26-33
+          detected at fixture.ml:573:26-33
         storage item 7 is missing
         |}];
       (* [Error.t] is covariant, so a bound value still widens by coercion. This
@@ -598,7 +598,7 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
       [%expect {| storage item 7 is missing |}];
       (* The bound domain covers the operations whose printer is mandatory. *)
       print_bool (Bound.or_raise (return 4) = 4);
-      (match Bound.export_exn (Bound.fail ~pos:__POS__ (`Offline "storage")) with
+      (match Bound.export_exn (Bound.fail ~pos:("fixture.ml", 601, 47, 54) (`Offline "storage")) with
       | Ok _ -> print_endline "unexpected"
       | Error exn -> print_endline (Printexc.to_string exn));
       [%expect
@@ -606,9 +606,9 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
         true
         storage is offline
         detected at:
-          test/core.ml:601:47-54
+          fixture.ml:601:47-54
         trace:
-          detected at test/core.ml:601:47-54
+          detected at fixture.ml:601:47-54
           exported
         |}])
 
@@ -617,7 +617,7 @@ let%expect_test "accumulation reports every failure with its own origin" =
       let visited = ref [] in
       let check value =
         visited := value :: !visited;
-        if value mod 2 = 0 then fail ~pos:__POS__ (`Even value) else return (value * 10)
+        if value mod 2 = 0 then fail ~pos:("fixture.ml", 620, 42, 49) (`Even value) else return (value * 10)
       in
       let result = Accum.map ~pos:__POS__ check [ 1; 2; 3; 4 ] in
       (* Every element runs, unlike Err.List.map which stops at the first error. *)
@@ -629,14 +629,14 @@ let%expect_test "accumulation reports every failure with its own origin" =
         1,2,3,4
         2 is even
         detected at:
-          test/core.ml:620:42-49
+          fixture.ml:620:42-49
         trace:
-          detected at test/core.ml:620:42-49
+          detected at fixture.ml:620:42-49
         4 is even
         detected at:
-          test/core.ml:620:42-49
+          fixture.ml:620:42-49
         trace:
-          detected at test/core.ml:620:42-49
+          detected at fixture.ml:620:42-49
         |}];
       (* Each failure keeps its own origin, so a report can point at each one. *)
       let origins =
@@ -648,7 +648,7 @@ let%expect_test "accumulation reports every failure with its own origin" =
             | None -> "-")
       in
       print_endline (String.concat " " origins);
-      [%expect {| test/core.ml:620:42-49 test/core.ml:620:42-49 |}];
+      [%expect {| fixture.ml:620:42-49 fixture.ml:620:42-49 |}];
       print_endline
         (match Accum.map ~pos:__POS__ check [ 1; 3 ] with
         | Ok values -> String.concat "," (Stdlib.List.map string_of_int values)
@@ -729,11 +729,12 @@ let%expect_test "escape exits its own frame and cannot cross a nested one" =
       | None -> print_endline "unreachable"
       | Some token -> (
           print_endline (Format.asprintf "%a" Escape.pp token);
-          try ignore (Escape.throw token ~pos:__POS__ (`Bad 5)) with exn -> print_endline (Printexc.to_string exn)));
+          try ignore (Escape.throw token ~pos:("fixture.ml", 732, 46, 53) (`Bad 5))
+          with exn -> print_endline (Printexc.to_string exn)));
       [%expect
         {|
         exited
-        Err.Escape.throw called after its with_escape call returned (at test/core.ml:732:46-53)
+        Err.Escape.throw called after its with_escape call returned (at fixture.ml:732:46-53)
         |}];
       (* Deep recursion is the reason this exists: no result is threaded. *)
       let deep =
@@ -766,7 +767,9 @@ let%expect_test "boundary helpers mark exactly one action" =
         boom:detect,export
         |}];
       (* import lifts a third-party result and records Import, not Detect. *)
-      let imported = import ~pos:__POS__ (fun message -> `Decode message) (Stdlib.Error "bad json") in
+      let imported =
+        import ~pos:("fixture.ml", 769, 33, 40) (fun message -> `Decode message) (Stdlib.Error "bad json")
+      in
       let error = get_error imported in
       Printf.printf "%s|%s|%s\n"
         (match Error.kind error with `Decode message -> message)
@@ -778,7 +781,7 @@ let%expect_test "boundary helpers mark exactly one action" =
         | None -> "-");
       [%expect {|
         bad json|import|import
-        test/core.ml:769:33-40
+        fixture.ml:769:33-40
         |}];
       print_endline
         (match import ~pos:__POS__ (fun message -> `Decode message) (Stdlib.Ok 3) with
@@ -812,7 +815,7 @@ let%expect_test "configuration vocabulary round-trips through of_strings" =
   in
   Stdlib.List.iter
     (fun config -> print_bool (reparse config))
-    [ Config.fast; Config.deterministic; Config.default; Config.debug ];
+    [ Config.fast; Config.deterministic; Config.with_stacks; Config.debug ];
   [%expect {|
     true
     true
@@ -833,8 +836,8 @@ let%expect_test "configuration vocabulary round-trips through of_strings" =
     {|
     off
     off
-    origin
-    events
+    off
+    off
     unknown backtrace mode "sometimes" (expected off, never, origin, or events)
     |}];
   (* Action.Set.pp separates with a break hint, so parsing must ignore spacing. *)
@@ -892,7 +895,7 @@ let%expect_test "the deterministic preset keeps the trail without capturing stac
       let error =
         fail ~pos:__POS__ `Boom
         |> map_error ~pos:__POS__ (fun `Boom -> `Wrapped)
-        |> mark_error ~pos:__POS__ Action.Export |> get_error
+        |> mark_error ~pos:__POS__ `Export |> get_error
       in
       (* The semantic trail survives; no stack is captured anywhere in it. *)
       print_endline (action_names error);
@@ -943,7 +946,7 @@ let%expect_test "two-list and predicate traversals" =
          what lets this subsume the length check that precedes a List.combine. *)
       let mismatch_calls = ref 0 in
       let mismatch =
-        List.map2 ~pos:__POS__ ~unequal_lengths
+        List.map2 ~pos:("fixture.ml", 946, 23, 30) ~unequal_lengths
           (fun value _ ->
             incr mismatch_calls;
             fail (`Bad value))
@@ -958,7 +961,7 @@ let%expect_test "two-list and predicate traversals" =
         | None -> "-");
       [%expect {|
         0|expected 3 arguments, got 1|detect
-        test/core.ml:946:23-30
+        fixture.ml:946:23-30
         |}];
       let visited = ref 0 in
       let iterated =
@@ -1411,8 +1414,8 @@ let%expect_test "a disabled action still maps the payload but changes nothing el
       | Error error -> Printf.printf "%d [%s]\n" (Error.kind error) (action_names error)
       | Ok () -> print_endline "ok");
       [%expect {| 3 [] |}];
-      print_bool (get_error (mark_error Action.Map failure) == get_error failure);
-      [%expect {| true |}])
+      print_bool (get_error (map_error Fun.id failure) == get_error failure);
+      [%expect {| false |}])
 
 let%expect_test "accessors expose the pieces of positions, external stacks and packed errors" =
   let pos = ("accessor.ml", 3, 4, 9) in
@@ -1496,13 +1499,26 @@ let%expect_test "trail invariants hold across random operations and policy chang
               Config.set !config;
               check (!current == before)
           | _ ->
-              let action = actions.(Random.State.int rng (Array.length actions)) in
+              let action, apply =
+                match Random.State.int rng 5 with
+                | 0 -> (Action.Filter, mark_error `Filter)
+                | 1 -> (Action.Catch, mark_error `Catch)
+                | 2 -> (Action.Import, mark_error `Import)
+                | 3 -> (Action.Export, mark_error `Export)
+                | _ -> (Action.Map, map_error Fun.id)
+              in
               let on = Action.Set.mem action (Config.actions !config) in
-              current := get_error (mark_error action (Error !current));
+              current := get_error (apply (Error !current : (unit, string) t));
               if on then begin
                 incr enabled;
                 last_max := Config.max_events !config
               end
+              else if action = Action.Map then
+                (* map_error rebuilds the record to map the payload even when Map is off. *)
+                check
+                  (Error.events !current == Error.events before
+                  || Error.events !current = Error.events before
+                     && Error.dropped_events !current = Error.dropped_events before)
               else check (!current == before));
           let retained = Stdlib.List.length (Error.events !current) in
           check (Error.origin !current == origin);
@@ -1513,3 +1529,228 @@ let%expect_test "trail invariants hold across random operations and policy chang
   (* The number of checks depends on the Random algorithm of the compiler. *)
   Printf.printf "many checks: %b, violations: %d\n" (!checked > 10_000) !violations;
   [%expect {| many checks: true, violations: 0 |}]
+
+let%expect_test "a raising monitor is contained and its failure is recorded or kept by policy" =
+  with_config
+    (make_config ~actions:(Action.Set.of_list [ Action.Map ]) ())
+    (fun () ->
+      let calls = ref 0 in
+      let trigger () = ignore (map_error Fun.id (fail "x" : (unit, string) t)) in
+      Stdlib.List.iter
+        (fun (name, exn) ->
+          let removed = Monitor.install (fun _ -> raise exn) in
+          trigger ();
+          let kept =
+            Monitor.install
+              ~on_failure:(fun _ -> `Keep)
+              (fun _ ->
+                incr calls;
+                raise exn)
+          in
+          trigger ();
+          trigger ();
+          print_endline
+            (Format.asprintf "%s: default=%a kept=%a calls=%d last=%b" name Monitor.pp removed Monitor.pp kept !calls
+               (Monitor.last_failure kept <> None));
+          calls := 0;
+          ignore (Monitor.remove kept))
+        [
+          ("Sys.Break", Sys.Break);
+          ("Stack_overflow", Stack_overflow);
+          ("Out_of_memory", Out_of_memory);
+          ("Failure", Failure "boom");
+        ];
+      let handle = Monitor.install (fun _ -> ()) in
+      trigger ();
+      print_bool (Monitor.last_failure handle = None);
+      ignore (Monitor.remove handle);
+      [%expect
+        {|
+        Sys.Break: default=removed kept=installed calls=2 last=true
+        Stack_overflow: default=removed kept=installed calls=2 last=true
+        Out_of_memory: default=removed kept=installed calls=2 last=true
+        Failure: default=removed kept=installed calls=2 last=true
+        true
+        |}])
+
+let%expect_test "observations say whether their event created the error" =
+  let collect config run =
+    with_config config (fun () ->
+        let seen = ref [] in
+        let handle =
+          Monitor.install (fun observation ->
+              let action = Format.asprintf "%a" Action.pp (Event.action (Observation.event observation)) in
+              seen := Printf.sprintf "%s:%b" action (Observation.is_creation observation) :: !seen)
+        in
+        Fun.protect ~finally:(fun () -> ignore (Monitor.remove handle)) (fun () -> run ());
+        String.concat " " (Stdlib.List.rev !seen))
+  in
+  let all = make_config ~actions:Action.Set.all () in
+  print_endline (collect all (fun () -> ignore (fail "x" : (unit, string) t)));
+  print_endline (collect all (fun () -> ignore (guard ~error:"x" false)));
+  print_endline (collect all (fun () -> ignore (import Fun.id (Error "x" : (unit, string) result))));
+  print_endline (collect all (fun () -> ignore (protect ~catch:(fun _ -> Some "x") (fun () -> failwith "boom"))));
+  print_endline (collect all (fun () -> ignore (mark_error `Export (map_error Fun.id (fail "x" : (unit, string) t)))));
+  print_endline
+    (collect
+       (make_config ~actions:(Action.Set.of_list [ Action.Map ]) ())
+       (fun () -> ignore (map_error Fun.id (fail "x" : (unit, string) t))));
+  print_endline
+    (collect (make_config ~actions:Action.Set.all ~max_events:0 ()) (fun () ->
+         ignore (map_error Fun.id (fail "x" : (unit, string) t))));
+  print_endline (collect all (fun () -> ignore (Accum.map (fun v -> (fail v : (unit, string) t)) [ "a"; "b" ])));
+  (* A policy change between creation and the first enabled event. *)
+  print_endline
+    (collect
+       (make_config ~actions:(Action.Set.of_list [ Action.Raise ]) ())
+       (fun () ->
+         let failure : (unit, string) t = fail "x" in
+         Config.set (make_config ~actions:Action.Set.all ());
+         ignore (map_error Fun.id failure)));
+  [%expect
+    {|
+    detect:true
+    filter:true
+    import:true
+    catch:true
+    detect:true map:false export:false
+    map:false
+    detect:true map:false
+    detect:true detect:true
+    map:false
+    |}]
+
+let%expect_test "the start-up policy keeps the trail and captures no stacks" =
+  let show config = Format.asprintf "%a" Config.pp config in
+  print_bool (show (Config.get ()) = show Config.deterministic);
+  print_bool
+    (match Config.of_strings ~trace:None ~backtrace:None ~max_events:None ~max_frames:None ~max_external_bytes:None with
+    | Ok config -> show config = show Config.deterministic
+    | Error _ -> false);
+  print_bool (Config.backtrace Config.with_stacks = Config.Origin);
+  [%expect {|
+    true
+    true
+    true
+    |}]
+
+let%expect_test "dropped events are reported as not retained" =
+  with_config (make_config ~actions:Action.Set.all ~max_events:0 ()) (fun () ->
+      let error = get_error (mark_error `Export (map_error Fun.id (fail "x" : (unit, string) t))) in
+      print_endline (Format.asprintf "%a" (Error.pp Format.pp_print_string) error);
+      [%expect {|
+        x
+        3 trace events not retained
+        |}])
+
+let%expect_test "applicative syntax joins the failures of every operand" =
+  with_config
+    (make_config ~actions:(Action.Set.of_list [ Action.Detect ]) ())
+    (fun () ->
+      let detected = ref 0 in
+      let handle = Monitor.install (fun _ -> incr detected) in
+      let parse input : (int, string) t =
+        if input >= 0 then return input else fail ("negative " ^ string_of_int input)
+      in
+      let sum left middle right =
+        Accum.Syntax.(
+          let+ left = Accum.lift (parse left)
+          and+ middle = Accum.lift (parse middle)
+          and+ right = Accum.lift (parse right) in
+          left + middle + right)
+      in
+      let show = function
+        | Ok total -> Printf.sprintf "ok %d" total
+        | Error batch -> String.concat "; " (Stdlib.List.map Error.kind (Error.kind batch))
+      in
+      print_endline (show (sum 1 2 3));
+      print_endline (show (sum 1 (-2) 3));
+      print_endline (show (sum (-1) 2 (-3)));
+      print_endline (show (sum (-1) (-2) (-3)));
+      Printf.printf "detected %d\n" !detected;
+      ignore (Monitor.remove handle);
+      [%expect
+        {|
+        ok 6
+        negative -2
+        negative -1; negative -3
+        negative -1; negative -2; negative -3
+        detected 6
+        |}])
+
+let%expect_test "a policy that captures zero frames is stored as no backtrace" =
+  let backtrace_of ~backtrace ~max_frames =
+    match Config.make ~actions:Action.Set.all ~backtrace ~max_events:4 ~max_frames ~max_external_bytes:16 with
+    | Ok config -> Format.asprintf "%a" Config.pp_backtrace (Config.backtrace config)
+    | Error _ -> "error"
+  in
+  Stdlib.List.iter
+    (fun (backtrace, max_frames) -> print_endline (backtrace_of ~backtrace ~max_frames))
+    [ (Config.Origin, 0); (Config.Events, 0); (Config.Origin, 1); (Config.Events, 1); (Config.Never, 0) ];
+  let parsed =
+    Config.of_strings ~trace:None ~backtrace:(Some "events") ~max_events:None ~max_frames:(Some "0")
+      ~max_external_bytes:None
+  in
+  print_endline
+    (match parsed with
+    | Ok config -> Format.asprintf "%a" Config.pp_backtrace (Config.backtrace config)
+    | Error _ -> "error");
+  [%expect {|
+    off
+    off
+    origin
+    events
+    off
+    off
+    |}]
+
+let%expect_test "the unlocated counter finds calls that omit the position" =
+  with_config (make_config ~actions:Action.Set.all ()) (fun () ->
+      Stats.reset_unlocated ();
+      let failure : (unit, string) t = fail "no position" in
+      ignore (map_error Fun.id failure);
+      Printf.printf "after two unlocated events: %d\n" (Stats.unlocated ());
+      ignore (fail ~pos:__POS__ "located" : (unit, string) t);
+      ignore (Located.map_error ~pos:__POS__ Fun.id failure);
+      ignore (Located.fail ~pos:__POS__ "also located" : (unit, string) t);
+      Printf.printf "after located events: %d\n" (Stats.unlocated ());
+      with_config Config.fast (fun () -> ignore (fail "disabled" : (unit, string) t));
+      Printf.printf "after a disabled event: %d\n" (Stats.unlocated ());
+      Stats.reset_unlocated ();
+      Printf.printf "after reset: %d\n" (Stats.unlocated ());
+      let located = Located.fail ~pos:("located.ml", 7, 2, 9) "boom" |> get_error in
+      print_endline
+        (match Option.bind (Error.origin located) Origin.source with
+        | Some source -> Format.asprintf "%a" Source.pp source
+        | None -> "no source");
+      [%expect
+        {|
+        after two unlocated events: 2
+        after located events: 2
+        after a disabled event: 2
+        after reset: 0
+        located.ml:7:2-9
+        |}])
+
+module Located_bound = Located.Make (Printer_storage)
+
+let%expect_test "a bound domain can require positions" =
+  with_config (make_config ()) (fun () ->
+      let failure = Located_bound.fail ~pos:("bound.ml", 4, 2, 9) (`Missing_item 3) |> get_error in
+      print_endline
+        (match Option.bind (Error.origin failure) Origin.source with
+        | Some source -> Format.asprintf "%a|%a" Source.pp source Located_bound.Error.pp_kind failure
+        | None -> "no source");
+      print_endline
+        (match
+           Located_bound.List.map2 ~pos:("bound.ml", 6, 2, 9)
+             ~unequal_lengths:(fun left right -> `Missing_item ((left * 10) + right))
+             (fun a b -> Ok (a + b))
+             [ 1 ] [ 1; 2 ]
+         with
+        | Ok _ -> "ok"
+        | Error error -> Format.asprintf "%a" Located_bound.Error.pp_kind error);
+      [%expect {|
+        bound.ml:4:2-9|storage item 3 is missing
+        storage item 12 is missing
+        |}])

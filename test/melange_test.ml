@@ -27,7 +27,7 @@ let import_javascript_error ~pos error =
   in
   let message = Option.value ~default:"JavaScript error" (Js.Exn.message error) in
   let origin = Err.Origin.make ~source:(Err.Source.of_pos pos) ?stack () in
-  Error (Err.Error.make_at ~origin (`Expected message)) |> Err.mark_error ~pos Err.Action.Catch
+  Error (Err.Error.make_at ~origin (`Expected message)) |> Err.mark_error ~pos `Catch
 
 let protect_javascript ~pos ~expected f =
   try Ok (f ())
@@ -37,7 +37,7 @@ let protect_javascript ~pos ~expected f =
     | Some _ | None -> raise exn)
 
 let export_javascript_error error =
-  let error = Err.mark_error Err.Action.Export (Error error) |> Result.get_error in
+  let error = Err.mark_error `Export (Error error) |> Result.get_error in
   make_error (Format.asprintf "%a" (Err.Error.pp pp_error) error)
 
 let settle_expected promise = Js.Promise.then_ (fun result -> Js.Promise.resolve (outcome result)) promise
@@ -145,7 +145,7 @@ let () =
      of the backtrace machinery. This backend does not implement
      [caml_restore_raw_backtrace], so it only holds because the library
      reattaches a backtrace solely when it has resolvable frames. Exercising it
-     needs a policy that captures stacks, as [Config.default] does. *)
+     needs a policy that captures stacks, as [Config.with_stacks] does. *)
   let capturing =
     Err.Config.make ~actions:Err.Action.Set.all ~backtrace:Err.Config.Origin ~max_events:8 ~max_frames:8
       ~max_external_bytes:0

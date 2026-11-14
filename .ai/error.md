@@ -266,23 +266,27 @@ Tracing events and capturing stacks are separate decisions.
 empty set disables event allocation. Individual actions can be selected; for
 example, an application may trace only `Map`, `Filter`, and `Raise`.
 
-Three presets are provided:
+Four presets are provided:
 
 | Preset | Actions | Intended use |
 |---|---|---|
-| `Config.fast` | none | Performance-sensitive production path |
-| `Config.default` | `Action.Set.boundaries` | Balanced diagnostics |
+| `Config.fast` | none | Cheapest policy; disables the whole trail, not the recommended production preset |
+| `Config.deterministic` | `Action.Set.boundaries` | Recommended production preset and start-up policy, no stacks |
+| `Config.with_stacks` | `Action.Set.boundaries` | Boundary trail plus origin stacks (was `default`) |
 | `Config.debug` | `Action.Set.all` | Debugging and tests |
 
 `Action.Set.boundaries` is every action except `Detect`. The complete presets
 are:
 
 - `fast`: no actions, `Never`, 0 events, 0 frames, 16 KiB external stacks;
-- `default`: boundary actions, `Origin`, 32 events, 32 frames, 16 KiB external
-  stacks;
+- `deterministic`: boundary actions, `Never`, 32 events, 0 frames, 16 KiB
+  external stacks;
+- `with_stacks`: boundary actions, `Origin`, 32 events, 32 frames, 16 KiB
+  external stacks (named `default` before the start-up policy changed);
 - `debug`: all actions, `Events`, 64 events, 64 frames, 16 KiB external stacks.
 
-`Config.default` is also the configuration installed at program start.
+`Config.deterministic` is the recommended production preset and the
+configuration installed at program start.
 
 ### Backtrace mode
 
@@ -376,7 +380,7 @@ ERR_MAX_EXTERNAL_BYTES=<non-negative integer>
 server, browser, and test hosts can obtain configuration through their normal
 mechanisms. Action names are the lowercase constructor names (`detect`, `map`,
 `filter`, `catch`, `raise`, `import`, `export`). An absent argument takes its
-value from `Config.default`, not from the currently installed configuration, so
+value from `Config.deterministic`, not from the currently installed configuration, so
 parsing the same host settings twice yields the same policy.
 
 ### Performance expectations
@@ -400,7 +404,9 @@ These are observable performance contracts; `bench/allocation.ml` measures them.
 
 ## Public interface
 
-The implemented interface, with documentation comments elided:
+`src/err.mli` is the authoritative interface. The listing below elides
+documentation comments; `Located` and the functor `Make`/`Domain`/`S` are only
+summarized after it.
 
 ```ocaml
 module Source : sig
@@ -408,6 +414,7 @@ module Source : sig
   type t
 
   val of_pos : pos -> t
+  val to_pos : t -> pos
   val pp_pos : Format.formatter -> pos -> unit
   val pp : Format.formatter -> t -> unit
 end
@@ -417,6 +424,7 @@ module Stack : sig
 
   val of_raw_backtrace : Printexc.raw_backtrace -> t
   val of_external : runtime:string -> stack:string -> t
+  val to_external : t -> (string * string * bool) option
   val is_available : t -> bool
   val to_raw_backtrace : t -> Printexc.raw_backtrace option
   val pp : Format.formatter -> t -> unit
@@ -434,6 +442,9 @@ end
 module Action : sig
   type t = Detect | Map | Filter | Catch | Raise | Import | Export
 
+  (* The actions mark_error may add to an existing error. *)
+  type marking = [ `Filter | `Catch | `Import | `Export ]
+
   val pp : Format.formatter -> t -> unit
 
   module Set : sig
@@ -445,6 +456,11 @@ module Action : sig
     val boundaries : t
     val of_list : action list -> t
     val mem : action -> t -> bool
+    val add : action -> t -> t
+    val remove : action -> t -> t
+    val union : t -> t -> t
+    val to_list : t -> action list
+    val equal : t -> t -> bool
     val pp : Format.formatter -> t -> unit
   end
 end
@@ -487,6 +503,9 @@ module Error : sig
     'b t
 
   val pp : (Format.formatter -> 'e -> unit) -> Format.formatter -> 'e t -> unit
+
+  (** The domain payload alone, without origin or events. *)
+  val pp_kind : (Format.formatter -> 'e -> unit) -> Format.formatter -> 'e t -> unit
 end
 
 type ('a, 'e) t = ('a, 'e Error.t) result
@@ -503,7 +522,8 @@ module Config : sig
     [ make_error
     | `Invalid_limit of limit * string
     | `Unknown_backtrace_mode of string
-    | `Unknown_trace_action of string ]
+    | `Unknown_trace_action of string
+    | `Empty_trace_action of int ]
 
   val pp_backtrace : Format.formatter -> backtrace -> unit
   val pp_limit : Format.formatter -> limit -> unit
@@ -519,10 +539,12 @@ module Config : sig
     (t, make_error Error.t) result
 
   val fast : t
-  val default : t
+  val deterministic : t  (* start-up policy; recommended for production *)
+  val with_stacks : t
   val debug : t
   val get : unit -> t
   val set : t -> unit
+  val with_config : t -> (unit -> 'a) -> 'a
 
   val actions : t -> Action.Set.t
   val backtrace : t -> backtrace
@@ -547,6 +569,7 @@ module Observation : sig
   val error_origin : t -> Origin.t option
   val retained_events : t -> Event.t list
   val dropped_events : t -> int
+  val is_creation : t -> bool
 
   (** Render the complete error when the producing operation supplied a payload
       printer; otherwise render the event and available trace metadata. *)
@@ -561,8 +584,11 @@ module Monitor : sig
   val install :
     ?actions:Action.Set.t ->
     ?on_error:(exn -> Stack.t option -> unit) ->
+    ?on_failure:(exn -> [ `Keep | `Remove ]) ->
     callback ->
     t
+
+  val last_failure : t -> (exn * Stack.t option) option
 
   (** Return [true] only for the call that transitions an installed monitor to
       removed. Further removals return [false]. *)
@@ -625,9 +651,27 @@ val map_error :
 val mark_error :
   ?pos:Source.pos ->
   ?pp_error:(Format.formatter -> 'e -> unit) ->
-  Action.t ->
+  Action.marking ->
   ('a, 'e) t ->
   ('a, 'e) t
+
+(** Drop the wrapper, keep the typed payload, record no event. *)
+val payload : ('a, 'e) t -> ('a, 'e) Stdlib.result
+
+(** Lift a bare result, mapping its error; records [Import], no [Detect]. *)
+val import :
+  ?pos:Source.pos ->
+  ?pp_error:(Format.formatter -> 'f -> unit) ->
+  ('e -> 'f) ->
+  ('a, 'e) Stdlib.result ->
+  ('a, 'f) t
+
+(** Record [Export], then drop the wrapper. *)
+val export :
+  ?pos:Source.pos ->
+  ?pp_error:(Format.formatter -> 'e -> unit) ->
+  ('a, 'e) t ->
+  ('a, 'e) Stdlib.result
 
 (** Convert only selected exceptions. Unselected exceptions are re-raised with
     the best backtrace representation available on the backend. *)
@@ -643,6 +687,10 @@ module Exn : sig
   exception E of packed
 
   val pp : Format.formatter -> packed -> unit
+
+  val origin : packed -> Origin.t option
+  val events : packed -> Event.t list
+  val dropped_events : packed -> int
 
   (** The domain payload alone, without origin or events. *)
   val pp_kind : Format.formatter -> packed -> unit
@@ -689,8 +737,80 @@ module List : sig
 
   val fold_left :
     ('acc -> 'a -> ('acc, 'e) t) -> 'acc -> 'a list -> ('acc, 'e) t
+
+  (** A length mismatch is a detected error built by [unequal_lengths]. *)
+  val map2 :
+    ?pos:Source.pos ->
+    ?pp_error:(Format.formatter -> 'e -> unit) ->
+    unequal_lengths:(int -> int -> 'e) ->
+    ('a -> 'b -> ('c, 'e) t) ->
+    'a list ->
+    'b list ->
+    ('c list, 'e) t
+
+  val iter2 :
+    ?pos:Source.pos ->
+    ?pp_error:(Format.formatter -> 'e -> unit) ->
+    unequal_lengths:(int -> int -> 'e) ->
+    ('a -> 'b -> (unit, 'e) t) ->
+    'a list ->
+    'b list ->
+    (unit, 'e) t
+
+  val filter_map : ('a -> ('b option, 'e) t) -> 'a list -> ('b list, 'e) t
+  val exists : ('a -> (bool, 'e) t) -> 'a list -> (bool, 'e) t
+  val for_all : ('a -> (bool, 'e) t) -> 'a list -> (bool, 'e) t
+end
+
+(** Run every element and report every failure, in input order. *)
+module Accum : sig
+  type 'e errors = 'e Error.t list
+
+  val pp_errors : (Format.formatter -> 'e -> unit) -> Format.formatter -> 'e errors -> unit
+  val map : ?pos:Source.pos -> ('a -> ('b, 'e) t) -> 'a list -> ('b list, 'e errors) t
+  val iter : ?pos:Source.pos -> ('a -> (unit, 'e) t) -> 'a list -> (unit, 'e errors) t
+  val all : ?pos:Source.pos -> ('a, 'e) t list -> ('a list, 'e errors) t
+  val both : ?pos:Source.pos -> ('a, 'e) t -> ('b, 'e) t -> ('a * 'b, 'e errors) t
+  val lift : ('a, 'e) t -> ('a, 'e errors) t
+  val fold_errors : ('e errors -> 'f) -> ('a, 'e errors) t -> ('a, 'f) t
+
+  module Syntax : sig
+    val ( let+ ) : ('a, 'e errors) t -> ('a -> 'b) -> ('b, 'e errors) t
+    val ( and+ ) : ('a, 'e errors) t -> ('b, 'e errors) t -> ('a * 'b, 'e errors) t
+  end
+end
+
+(** Scoped non-local exit; the companion of [protect] for the current module. *)
+module Escape : sig
+  type 'e t
+  exception Escaped_after_exit of Source.t option
+
+  val with_escape : ('e t -> 'a) -> ('a, 'e Error.t) result
+  val throw : 'e t -> ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> 'a
+  val throw_error : ?pos:Source.pos -> 'e t -> 'e Error.t -> 'a
+  val or_throw : ?pos:Source.pos -> 'e t -> ('a, 'e Error.t) result -> 'a
+  val map : ('e -> 'f) -> 'f t -> 'e t
+  val pp : Format.formatter -> 'e t -> unit
+end
+
+(** Count of events recorded without [?pos]. *)
+module Stats : sig
+  val unlocated : unit -> int
+  val reset_unlocated : unit -> unit
 end
 ```
+
+Two further items are described by `src/err.mli` and not repeated here:
+
+- `Located` repeats the operations that take `?pos` (`fail`, `of_option`,
+  `map_none`, `guard`, `map_error`, `mark_error`, `import`, `export`,
+  `protect`, `throw`, `throw_error`, `or_throw`, `to_exn`, `export_exn`,
+  `raise_error`, `or_raise`) with `~pos` mandatory, so omitting it is a type
+  error;
+- `module type Domain` (`type error` and `pp_error`) and the functor
+  `Make (D : Domain) : S with type error = D.error` bind a domain printer once:
+  `S` has the printer-taking operations of `Err`, `Err.Error` and `Err.List`
+  (`map2`, `iter2`) with `?pp_error` already supplied.
 
 There is no `Exn.install_printer`. The `Printexc` printer for `Exn.E` is
 registered during module initialization, so callers have no registration work
@@ -868,21 +988,22 @@ than an error value that no longer exists.
 
 `protect` reads the configuration once, at the moment an exception is caught, so
 a classifier that changes the process policy cannot retroactively affect this
-capture. When backtrace mode is `Origin` or `Events`, it records
-`Printexc.get_raw_backtrace ()` immediately after catching, before invoking the
-classifier. If the classifier returns `None`, the exception is re-raised with
-`Printexc.raise_with_backtrace`. If selected:
+capture. It always records `Printexc.get_raw_backtrace ()` immediately after
+catching, before invoking the classifier, whatever the backtrace mode. If the
+classifier returns `None`, the exception is re-raised through `reraise`, which
+reattaches the backtrace with `Printexc.raise_with_backtrace` when it has
+resolvable frames and uses plain `raise` otherwise. If selected:
 
-- `backtrace = Never` does not request the raw backtrace; it classifies the
-  exception and uses ordinary `raise` for an unselected exception;
-- otherwise the exception raw backtrace becomes the error origin, alongside an
-  explicit `~pos` when supplied;
+- `backtrace = Never` retains no stack;
+- otherwise (`Origin` or `Events`) the raw backtrace, cut to `max_frames` slots
+  after the classifier has claimed the exception, becomes the error origin
+  (none when `max_frames = 0`), alongside an explicit `~pos` when supplied;
 - a `Catch` event records the catch boundary when selected.
 
-The fast-mode tradeoff is explicit: an unselected native exception's runtime
-backtrace may point at the re-raise rather than its original raise site. A
-JavaScript `Error` object generally retains its own `stack` property
-independently.
+Re-raising does not depend on the backtrace mode, so an unselected native
+exception keeps its original raise site wherever the runtime has a backtrace to
+reattach. A JavaScript `Error` object generally retains its own `stack`
+property independently.
 
 Backend-specific JavaScript exception adapters should inspect JavaScript error
 objects before falling back to generic `protect`, because their useful stack is
@@ -1032,7 +1153,7 @@ trace:
   mapped at decode.ml:88:2-54
   exported at cli.ml:17:4-31
   raised at command.ml:52:6-40
-2 older trace events omitted
+2 trace events not retained
 ```
 
 If origin or events are absent, their sections are omitted. If stack capture was
@@ -1115,10 +1236,14 @@ errors retain no event history. Observations produced by calls that passed
 ### Cheap production mode
 
 ```ocaml
-let () = Err.Config.set Err.Config.fast
+let () = Err.Config.set Err.Config.deterministic
 ```
 
-Typed failures still work normally. No event or automatic stack is captured.
+Typed failures still work normally. The boundary trail is kept and no automatic
+stack is captured. This is also the policy in force at program start, so the
+call is only needed to restore it. `Err.Config.fast` is cheaper still but
+disables the whole trail, so an error that crosses several domains records none
+of those boundaries.
 
 ### Debug mode
 
@@ -1245,19 +1370,15 @@ The questions each conversion answers are:
 ### Bare standard results
 
 ```ocaml
-let of_result result =
-  result
-  |> Stdlib.Result.map_error Err.Error.make
-  |> Err.mark_error ~pos:__POS__ Err.Action.Import
-
-let to_result result =
-  result
-  |> Err.mark_error ~pos:__POS__ Err.Action.Export
-  |> Stdlib.Result.map_error Err.Error.kind
+let of_result result = Err.import ~pos:__POS__ Fun.id result
+let to_result result = Err.export ~pos:__POS__ result
 ```
 
-Both helpers are named rather than inlined: one captures only the import
-boundary, and the other deliberately discards trace data.
+`Err.import` records `Import` and maps the bare error into this domain;
+`Err.export` records `Export` and then drops the wrapper. Both are named
+rather than inlined: one captures only the import boundary, and the other
+deliberately discards trace data. `Err.payload` drops the wrapper without
+recording an event.
 
 ### Jane Street errors
 
@@ -1467,12 +1588,13 @@ boundary diagnostics without coupling the package to either compiler.
 
 ### Melange build arrangement
 
-Melange support is an opt-in capability rather than a package dependency,
-because Melange does not support this package's compiler floor. Setting
-`ERR_TRACE_TEST_MELANGE=true` disables the ordinary `src/dune` library stanza
-and enables `melange/src`, which copies `err.ml`/`err.mli` and builds the same
-sources with `(modes byte native melange)`. Normal builds therefore never
-schedule `melc` rules. `make test-melange-optin` enforces exactly that: with the
+Melange support is a separate package, `err_trace-melange`, so that the native
+`err_trace` package needs no `melange` dependency. Its library lives in
+`melange/src`, which copies `err.ml`/`err.mli` and builds the same sources with
+`(modes byte native melange)`. The stanza is enabled only when
+`ERR_TRACE_MELANGE=true` (set by the `err_trace-melange` opam build) or
+`ERR_TRACE_TEST_MELANGE=true` (the tests); the ordinary `src/dune` stanza is
+unaffected. Normal builds therefore never schedule `melc` rules. `make test-melange-optin` enforces exactly that: with the
 variable unset it asserts that `dune rules @all` schedules no `melc` rule and
 that `dune build @all` succeeds, and when `melc` is on `PATH` it asserts that
 the opt-in configuration does schedule `melc` rules and builds `@melange-test`.
@@ -1615,7 +1737,7 @@ a genuine `Error`, and that normal responses omit debug stacks.
 Expect tests cannot prove the performance contract. `bench/allocation.ml`
 (`make bench`) measures allocated bytes per operation for:
 
-- success paths under the `fast`, `default`, and `debug` presets;
+- success paths under the `fast`, `deterministic`, `with_stacks`, and `debug` presets;
 - failure construction with backtraces off versus `Origin`;
 - `map_error` with the action disabled, with source-only tracing, and in
   event-stack mode;
@@ -1651,20 +1773,15 @@ depends: [
   "dune" {>= "3.15"}
   "odoc" {with-doc}
   "ppx_expect" {with-test}
-  "base" {with-test}
-  "async_kernel" {with-test}
-  "lwt" {with-test}
-  "rresult" {with-test}
-  "cmdliner" {with-test}
-  "mirage-flow" {with-test}
-  "fmt" {with-test}
-  "logs" {with-test}
-  "yojson" {with-test}
-  "js_of_ocaml" {with-test}
-  "js_of_ocaml-compiler" {with-test}
-  "js_of_ocaml-ppx" {with-test}
+  "mdx" {with-test}
 ]
 ```
+
+The only test-only dependencies are `ppx_expect` and `mdx`. The adapter and
+JavaScript test dependencies (`base`, `async_kernel`, `lwt`, `rresult`,
+`cmdliner`, `mirage-flow`, `fmt`, `logs`, `yojson`, `js_of_ocaml-compiler`,
+`js_of_ocaml-ppx`) are not in `depends`; the Makefile targets that need them
+install them.
 
 `Atomic` is the newest standard-library API the implementation uses, and it
 arrived in OCaml 4.12, which sets the compiler floor. `compiler-libs.common`
@@ -1673,9 +1790,9 @@ it needs no opam entry.
 
 Two capabilities are deliberately absent from `depends`:
 
-- Melange does not support the 4.12 floor and the package's `run-test` command
-  does not enable Melange rules, so it stays an opt-in capability exercised in
-  its own JavaScript environment;
+- Melange does not support the 4.12 floor, so it lives in the separate
+  `err_trace-melange` package, and `err_trace`'s `run-test` command does not
+  enable Melange rules; it is exercised in its own JavaScript environment;
 - `octez-libs` would impose an outsized dependency closure and platform
   restrictions on ordinary opam users, so Octez conformance stays a CI
   capability (`make test-octez`) rather than a published auxiliary package.

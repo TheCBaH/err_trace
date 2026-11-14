@@ -51,6 +51,19 @@ The library itself only depends on the OCaml standard library and supports OCaml
 4.12 and later. OCaml 4.12 is the lower bound because the implementation uses
 the standard library's `Atomic` module.
 
+## Binding results
+
+Open `Err.Syntax` for `let*`, `let+`, `>>=` and `>>|`, locally or for a whole
+module. Do not `open Err` itself: it defines `List`, `Error`, `map`, `fail` and
+other names that shadow the standard library's.
+
+```ocaml
+let doubled n =
+  let open Err.Syntax in
+  let* () = Err.guard ~pos:__POS__ ~error:`Not_positive (n > 0) in
+  Err.return (n * 2)
+```
+
 ## Trace policy
 
 Tracing is process configuration, not an environment-variable side effect.
@@ -60,9 +73,10 @@ Pick one policy during process startup:
   stacks. It disables the whole semantic trail, not just stack capture.
 - `Err.Config.set Err.Config.deterministic` keeps the boundary event trail and
   captures no stacks. This is the production preset for a program that wants
-  identical diagnostics on every backend.
-- `Err.Config.set Err.Config.default` retains selected boundary events and an
-  origin stack.
+  identical diagnostics on every backend. It is the policy in force at
+  program start.
+- `Err.Config.set Err.Config.with_stacks` adds an origin stack to the boundary
+  events of `deterministic` (this preset was named `default`).
 - `Err.Config.set Err.Config.debug` records every semantic action.
 
 The two sources of nondeterminism are independent: `actions` decides how much

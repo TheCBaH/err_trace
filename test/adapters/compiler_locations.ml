@@ -23,7 +23,7 @@ let import location message : diagnostic Err.Error.t =
   Err.Error.make_at ~origin (`Compiler (location, message))
 
 let export error =
-  let error = Err.mark_error Err.Action.Export (Error error) |> Result.get_error in
+  let error = Err.mark_error `Export (Error error) |> Result.get_error in
   match Err.Error.kind error with
   | `Compiler (location, message) -> Format.asprintf "%a: %s" Location.print_loc location message
 

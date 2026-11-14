@@ -13,12 +13,10 @@ let config =
   |> Result.get_ok
 
 let import_or_error (result : ('a, Base.Error.t) result) : ('a, error Err.Error.t) result =
-  result
-  |> Stdlib.Result.map_error (fun error -> Err.Error.make (`Jane_street error))
-  |> Err.mark_error Err.Action.Import
+  Err.import (fun error -> `Jane_street error) result
 
 let export_or_error result : int Base.Or_error.t =
-  result |> Err.mark_error Err.Action.Export
+  result |> Err.mark_error `Export
   |> Stdlib.Result.map_error (fun error -> Base.Error.of_string (Format.asprintf "%a" (Err.Error.pp pp_error) error))
 
 let deferred_map f deferred = Async_kernel.Deferred.map deferred ~f

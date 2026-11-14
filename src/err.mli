@@ -72,7 +72,10 @@ module Origin : sig
 end
 
 module Action : sig
-  (** A semantic error transition, rather than an ordinary propagation step. *)
+  (** A semantic error transition, rather than an ordinary propagation step.
+
+      [t] is a closed public variant: a new constructor makes every exhaustive match in client code fail to compile, so
+      match with a wildcard if the program must survive a new release. *)
   type t =
     | Detect
     | Map
@@ -81,6 +84,11 @@ module Action : sig
     | Raise
     | Import
     | Export  (** [Detect] creates a failure; other constructors describe semantic boundaries. *)
+
+  type marking = [ `Filter | `Catch | `Import | `Export ]
+  (** The actions {!Err.mark_error} may add to an existing error: a boundary the error crosses. [Detect], [Map] and
+      [Raise] describe an error being created, converted or raised, which {!Err.fail}, {!Err.map_error} and
+      {!Err.raise_error} do, so marking one by hand could record a transition that did not happen. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render the action name. *)
@@ -222,9 +230,10 @@ module Config : sig
   val pp_of_strings_error : Format.formatter -> of_strings_error -> unit
   (** Render a configuration parsing or validation failure. *)
 
-  (** Validate limits and construct a trace policy. Limits must be non-negative and representable on a 32-bit runtime,
-      and [max_events] is at most 4096: each retained event can hold a stack of [max_frames] frames, so a larger trail
-      is an unbounded cost per error. Failures use the library's own typed error wrapper. *)
+  (** Validate limits and construct a trace policy. Limits must be non-negative and representable on a 32-bit runtime.
+      [max_events] is at most 4096: each retained event can hold a stack of [max_frames] frames, so a larger trail is an
+      unbounded cost per error. [max_frames = 0] stores [backtrace] as [Never], because no frame can be captured.
+      Failures use the library's own typed error wrapper. *)
   val make :
     actions:Action.Set.t ->
     backtrace:backtrace ->
@@ -247,11 +256,14 @@ module Config : sig
       native OCaml, bytecode, js_of_ocaml, and Melange wherever call sites supply [~pos:__POS__].
 
       The two sources of nondeterminism are independent: {!actions} decides how much semantic trail is kept, and
-      {!val-backtrace} decides whether call stacks are captured. The [fast]/[default]/[debug] ladder bundles them; this
-      preset is the useful off-diagonal combination. *)
+      {!val-backtrace} decides whether call stacks are captured. The [fast]/[with_stacks]/[debug] ladder bundles them;
+      this preset is the useful off-diagonal combination, and it is the policy in force before any call to {!set}.
+      Absent settings in {!of_strings} are read from it too. *)
 
-  val default : t
-  (** Boundary-event preset with origin stacks. This is the policy in force before any call to {!set}. *)
+  val with_stacks : t
+  (** Boundary-event preset with origin stacks: {!deterministic} plus a call stack captured where each error is created.
+      Stacks differ between native OCaml, bytecode, js_of_ocaml and Melange. This was named [default] and was the policy
+      in force at start-up; the start-up policy is now {!deterministic}. *)
 
   val debug : t
   (** All-event preset with event stacks. *)
@@ -322,6 +334,12 @@ module Observation : sig
   val dropped_events : t -> int
   (** Return the snapshot's dropped-event count. *)
 
+  val is_creation : t -> bool
+  (** Whether this event is the one that created the error: [Detect] from {!Err.fail} and the other constructors,
+      [Filter] from {!Err.guard}, [Import] from {!Err.import}, and [Catch] from {!Err.protect}. It does not depend on
+      what the policy retains, so it stays [true] with [max_events = 0] and [false] for a later event on an error whose
+      own creation event was disabled. An {!Err.Accum} batch wrapper is not a creation: each element failure is. *)
+
   val pp : Format.formatter -> t -> unit
   (** Print the complete error only when the producing boundary supplied a payload printer; otherwise print event
       metadata. *)
@@ -338,9 +356,24 @@ module Monitor : sig
   (** A synchronous callback invoked for each matching enabled event. Callbacks must be short, non-blocking, and must
       not produce further [Err] events. *)
 
-  val install : ?actions:Action.Set.t -> ?on_error:(exn -> Stack.t option -> unit) -> callback -> t
-  (** Install [callback] in installation order. [actions] defaults to every action. A callback that raises is removed;
-      [on_error] then receives its exception and a stack when the active policy captured one. *)
+  val install :
+    ?actions:Action.Set.t ->
+    ?on_error:(exn -> Stack.t option -> unit) ->
+    ?on_failure:(exn -> [ `Keep | `Remove ]) ->
+    callback ->
+    t
+  (** Install [callback] in installation order. [actions] defaults to every action.
+
+      A monitor must not break the code it observes, so an exception raised by [callback] is contained: it never reaches
+      the code that produced the event, and that includes [Sys.Break], [Out_of_memory] and [Stack_overflow], which a
+      monitor in the middle of a [Stack_overflow] cannot meaningfully recover from either. The failure is recorded on
+      the handle ({!last_failure}) and passed to [on_failure], which answers [`Remove] (the default) to uninstall the
+      monitor or [`Keep] to leave it installed. [on_error] then receives the exception and a stack when the active
+      policy captured one. A handler that itself raises counts as [`Remove] and is otherwise ignored. *)
+
+  val last_failure : t -> (exn * Stack.t option) option
+  (** The exception, and the stack when the active policy captured one, of the most recent time this monitor's callback
+      raised; [None] if it never has. *)
 
   val remove : t -> bool
   (** Idempotently remove a monitor. It returns [true] only for the call that changes an installed monitor to removed.
@@ -387,8 +420,10 @@ val bind : ('a, 'e) t -> ('a -> ('b, 'e) t) -> ('b, 'e) t
 val map_error : ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'f -> unit) -> ('e -> 'f) -> ('a, 'e) t -> ('a, 'f) t
 (** Map errors and append [Map] only when selected. [pp_error] describes the mapped domain for matching monitors. *)
 
-val mark_error : ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> Action.t -> ('a, 'e) t -> ('a, 'e) t
-(** Append a selected semantic action only on errors. *)
+val mark_error :
+  ?pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> Action.marking -> ('a, 'e) t -> ('a, 'e) t
+(** Append a boundary action ([`Filter], [`Catch], [`Import] or [`Export]) only on errors, when the policy selects it.
+*)
 
 val payload : ('a, 'e) t -> ('a, 'e) Stdlib.result
 (** Drop the wrapper and keep the typed payload, recording no event. This is the unmarked unwrap, for tests, assertions,
@@ -572,7 +607,7 @@ module type S = sig
   (** {!Err.map_error} into this domain. The source domain stays polymorphic: only the destination is bound, which is
       the domain whose printer the [Map] observation needs. *)
 
-  val mark_error : ?pos:Source.pos -> Action.t -> ('a, error Error.t) result -> ('a, error Error.t) result
+  val mark_error : ?pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
   (** {!Err.mark_error} with the domain printer supplied. *)
 
   val protect : ?pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result
@@ -742,6 +777,18 @@ module Accum : sig
   (** Lift one ordinary result into the accumulating error domain. An error becomes a one-element batch while retaining
       its origin and event trail. *)
 
+  (** Applicative syntax over batches: [let+ a = lift (parse x) and+ b = lift (parse y) in combine a b] runs every
+      operand and, when several fail, reports all their failures in operand order. Operands are [('a, 'e errors) t], so
+      lift an ordinary result with {!lift} and use {!map}, {!both} or another batch directly.
+
+      Joining adds no event of its own: each failure keeps the origin and trail it was detected with, and the joined
+      batch wrapper has no origin. A batch whose list is empty is an [Error] that reports no failures; {!map} and
+      {!iter} never build one, so it arises only from a hand-made value. *)
+  module Syntax : sig
+    val ( let+ ) : ('a, 'e errors) t -> ('a -> 'b) -> ('b, 'e errors) t
+    val ( and+ ) : ('a, 'e errors) t -> ('b, 'e errors) t -> ('a * 'b, 'e errors) t
+  end
+
   val fold_errors : ('e errors -> 'f) -> ('a, 'e errors) t -> ('a, 'f) t
   (** Collapse a batch into a payload chosen by the caller, so a function can accumulate internally without changing its
       published error domain. The combiner is mandatory because the library cannot invent a value in that domain.
@@ -749,4 +796,110 @@ module Accum : sig
       On a non-empty batch, the returned wrapper retains the first failure's origin and event trail; every failure
       remains available to the combiner. The empty case is supported for manually constructed batch errors and retains
       that batch wrapper's provenance. No [Map] event is recorded. *)
+end
+
+(** {1 Positions} *)
+
+module Stats : sig
+  val unlocated : unit -> int
+  (** How many events this process recorded without a source position, because the call omitted [?pos]. An event the
+      policy disabled is not counted. Compare it before and after a piece of work to find call sites that still lack
+      [~pos:__POS__], or use {!Located} to make the position mandatory. *)
+
+  val reset_unlocated : unit -> unit
+  (** Set the counter back to zero. *)
+end
+
+(** The operations of {!Err} that take [?pos], with the position mandatory. Each is the unlocated operation with [~pos]
+    required, so omitting it is a type error instead of a silent loss of provenance. Use the result qualified or behind
+    a local alias:
+
+    {[
+      module E = Err.Located
+
+      let find id = E.of_option ~pos:__POS__ (`Missing id) (lookup id)
+    ]} *)
+module Located : sig
+  val fail : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> ('a, 'e) t
+  val of_option : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> 'a option -> ('a, 'e) t
+
+  val map_none :
+    pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> error:(unit -> 'e) -> 'a option -> ('a, 'e) t
+
+  val guard : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> error:'e -> bool -> (unit, 'e) t
+  val map_error : pos:Source.pos -> ?pp_error:(Format.formatter -> 'f -> unit) -> ('e -> 'f) -> ('a, 'e) t -> ('a, 'f) t
+
+  val mark_error :
+    pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> Action.marking -> ('a, 'e) t -> ('a, 'e) t
+
+  val import :
+    pos:Source.pos -> ?pp_error:(Format.formatter -> 'f -> unit) -> ('e -> 'f) -> ('a, 'e) Stdlib.result -> ('a, 'f) t
+
+  val export : pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> ('a, 'e) Stdlib.result
+
+  val protect :
+    pos:Source.pos ->
+    ?pp_error:(Format.formatter -> 'e -> unit) ->
+    catch:(exn -> 'e option) ->
+    (unit -> 'a) ->
+    ('a, 'e) t
+
+  val throw : 'e Escape.t -> pos:Source.pos -> ?pp_error:(Format.formatter -> 'e -> unit) -> 'e -> 'a
+  val throw_error : pos:Source.pos -> 'e Escape.t -> 'e Error.t -> 'a
+  val or_throw : pos:Source.pos -> 'e Escape.t -> ('a, 'e Error.t) result -> 'a
+  val to_exn : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> 'e Error.t -> exn
+  val export_exn : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> ('a, exn) result
+  val raise_error : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> 'e Error.t -> 'a
+  val or_raise : pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> ('a, 'e) t -> 'a
+
+  (** The operations of {!Make}, with [~pos] mandatory. *)
+  module type S = sig
+    type error
+
+    val pp_error : Format.formatter -> error -> unit
+    val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> ('a, error Error.t) result -> unit
+    val fail : pos:Source.pos -> error -> ('a, error Error.t) result
+    val of_option : pos:Source.pos -> error -> 'a option -> ('a, error Error.t) result
+    val map_none : pos:Source.pos -> error:(unit -> error) -> 'a option -> ('a, error Error.t) result
+    val guard : pos:Source.pos -> error:error -> bool -> (unit, error Error.t) result
+    val map_error : pos:Source.pos -> ('e -> error) -> ('a, 'e Error.t) result -> ('a, error Error.t) result
+    val mark_error : pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
+    val protect : pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result
+    val import : pos:Source.pos -> ('e -> error) -> ('a, 'e) result -> ('a, error Error.t) result
+    val export : pos:Source.pos -> ('a, error Error.t) result -> ('a, error) result
+    val to_exn : pos:Source.pos -> error Error.t -> exn
+    val export_exn : pos:Source.pos -> ('a, error Error.t) result -> ('a, exn) result
+    val raise_error : pos:Source.pos -> error Error.t -> 'a
+    val or_raise : pos:Source.pos -> ('a, error Error.t) result -> 'a
+    val with_escape : (error Escape.t -> 'a) -> ('a, error Error.t) result
+    val throw : error Escape.t -> pos:Source.pos -> error -> 'a
+
+    module List : sig
+      val map2 :
+        pos:Source.pos ->
+        unequal_lengths:(int -> int -> error) ->
+        ('a -> 'b -> ('c, error Error.t) result) ->
+        'a list ->
+        'b list ->
+        ('c list, error Error.t) result
+
+      val iter2 :
+        pos:Source.pos ->
+        unequal_lengths:(int -> int -> error) ->
+        ('a -> 'b -> (unit, error Error.t) result) ->
+        'a list ->
+        'b list ->
+        (unit, error Error.t) result
+    end
+
+    module Error : sig
+      val make : pos:Source.pos -> error -> error Error.t
+      val map_kind : pos:Source.pos -> ('e -> error) -> 'e Error.t -> error Error.t
+      val pp : Format.formatter -> error Error.t -> unit
+      val pp_kind : Format.formatter -> error Error.t -> unit
+    end
+  end
+
+  (** {!Err.Make} with [~pos] mandatory on every operation that takes [?pos]. *)
+  module Make (D : Domain) : S with type error = D.error
 end
