@@ -67,6 +67,17 @@ bench-check:
 doc:
 	$(DUNE) build @doc
 
+NS_PREFIX ?= $(CURDIR)/_build/ns-install
+
+namespace-check:
+	$(DUNE) build -p err_trace @install
+	$(DUNE) install --prefix $(NS_PREFIX) err_trace
+	ERR_TRACE_MELANGE=true $(DUNE) build -p err_trace-melange @install
+	ERR_TRACE_MELANGE=true $(DUNE) install --prefix $(NS_PREFIX) err_trace-melange
+	scripts/namespace-check.sh --fail -q --prefix Err_trace \
+	  --exceptions scripts/namespace.exceptions --expect-libs scripts/namespace.expect \
+	  native=$(NS_PREFIX)/lib/err_trace melange=$(NS_PREFIX)/lib/err_trace-melange
+
 fmt:
 	$(DUNE) fmt
 
@@ -76,4 +87,4 @@ fmt-check:
 test: test-core
 ci: build test-core bench-check fmt-check
 
-.PHONY: build test test-core test-multicore test-base-async test-lwt test-rresult test-cmdliner test-mirage test-octez test-fmt-logs-yojson test-compiler-locations test-js test-melange test-melange-optin bench bench-check doc fmt fmt-check ci
+.PHONY: namespace-check build test test-core test-multicore test-base-async test-lwt test-rresult test-cmdliner test-mirage test-octez test-fmt-logs-yojson test-compiler-locations test-js test-melange test-melange-optin bench bench-check doc fmt fmt-check ci
