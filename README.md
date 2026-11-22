@@ -47,6 +47,10 @@ file does; a checkout built without it skips the library, so set the variable
 when building `err_trace-melange` from source.
 
 Add `err_trace` to the `libraries` field of your Dune stanza, then use `Err_trace`.
+An application that prefers the short name `Err` adds `err_trace.err` (or
+`err_trace-melange.err`) instead: an unwrapped library whose one module is
+`include Err_trace`, so every type equals `Err_trace`'s. Reusable libraries
+should name `Err_trace` in their public signatures.
 The library itself only depends on the OCaml standard library and supports OCaml
 4.12 and later. OCaml 4.12 is the lower bound because the implementation uses
 the standard library's `Atomic` module.

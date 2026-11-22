@@ -21,7 +21,7 @@
  (modes js)
  (enabled_if
   (= %{env:ERR_TRACE_TEST_JS=false} "true"))
- (libraries portable_checks_js err_trace js_of_ocaml)
+ (libraries portable_checks_js alias_checks_js err_trace js_of_ocaml)
  (preprocess
   (pps js_of_ocaml-ppx)))
 
@@ -33,6 +33,10 @@
  (emit_stdlib true)
  (enabled_if
   (= %{env:ERR_TRACE_TEST_MELANGE=false} "true"))
- (libraries portable_checks_melange err_trace_melange melange)
+ (libraries
+  portable_checks_melange
+  alias_checks_melange
+  err_trace_melange
+  melange)
  (preprocess
   (pps melange.ppx)))

@@ -1,0 +1,10 @@
+(copy_files#
+ (files ../alias/alias_checks.ml))
+
+(library
+ (name alias_checks_js)
+ (wrapped false)
+ (modules alias_checks)
+ (enabled_if
+  (= %{env:ERR_TRACE_TEST_JS=false} "true"))
+ (libraries err_trace err_trace.err))

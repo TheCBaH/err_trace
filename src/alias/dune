@@ -1,0 +1,6 @@
+(library
+ (name err_trace_err)
+ (public_name err_trace.err)
+ (synopsis "Opt-in global module name Err for Err_trace")
+ (wrapped false)
+ (libraries err_trace))

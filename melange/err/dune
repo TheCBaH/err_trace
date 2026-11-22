@@ -1,0 +1,14 @@
+(copy_files#
+ (files ../../src/alias/err.ml))
+
+(library
+ (name err_trace_melange_err)
+ (public_name err_trace-melange.err)
+ (synopsis "Opt-in global module name Err for Err_trace, for Melange")
+ (modes byte native melange)
+ (enabled_if
+  (or
+   (= %{env:ERR_TRACE_MELANGE=false} "true")
+   (= %{env:ERR_TRACE_TEST_MELANGE=false} "true")))
+ (wrapped false)
+ (libraries err_trace-melange))

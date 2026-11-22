@@ -1,0 +1,5 @@
+(tests
+ (names alias_native)
+ (modules alias_native alias_checks)
+ (modes byte native)
+ (libraries err_trace err_trace.err))

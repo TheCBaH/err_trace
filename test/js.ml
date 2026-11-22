@@ -78,6 +78,7 @@ let () =
   let native_export = export_javascript_error imported in
   assert_true (Js.instanceof native_export Js.error_constr);
   Portable_checks.run ~check;
+  Alias_checks.run ~check;
   let expected_promise =
     Promise.resolve (Err_trace.fail (`Expected "promise"))
     |> settle_expected

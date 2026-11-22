@@ -74,6 +74,7 @@ let () =
   assert_true (Js.Exn.name native_export = Some "Error");
   assert_true (Js.Exn.message native_export <> None);
   Portable_checks.run ~check;
+  Alias_checks.run ~check;
   let expected_promise =
     Js.Promise.resolve (Err_trace.fail (`Expected "promise"))
     |> settle_expected

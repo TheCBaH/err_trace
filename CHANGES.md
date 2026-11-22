@@ -2,6 +2,11 @@
 
 ## Unreleased (0.3.0, after 0.1.0)
 
+### Added
+
+- `err_trace.err` and `err_trace-melange.err`, opt-in alias libraries that
+  provide the global module `Err` as `include Err_trace`.
+
 ### Breaking
 
 - The library's module is renamed `Err` to `Err_trace` (`src/err_trace.ml`),
