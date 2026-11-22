@@ -1,4 +1,4 @@
-open Err
+open Err_trace
 
 let pp_string = Format.pp_print_string
 let print_bool value = print_endline (string_of_bool value)
@@ -102,7 +102,7 @@ let%expect_test "configuration presets, parsing, and portable bounds" =
        ~max_external_bytes:0);
   [%expect "true"]
 
-let%expect_test "configuration errors dog-food Err.t and public data types have printers" =
+let%expect_test "configuration errors dog-food Err_trace.t and public data types have printers" =
   let detect_only = make_config ~actions:(Action.Set.of_list [ Action.Detect ]) ~backtrace:Config.Never () in
   with_config detect_only (fun () ->
       let invalid_make : (Config.t, Config.make_error) t =
@@ -556,7 +556,7 @@ module Printer_wide = struct
 end
 
 (* [Printer_storage] already has [type error] and [pp_error], which is the shape
-   this library asks a domain to have, so it satisfies [Err.Domain] unchanged. *)
+   this library asks a domain to have, so it satisfies [Err_trace.Domain] unchanged. *)
 module Bound = Make (Printer_storage)
 
 let%expect_test "a bound domain fixes the row while raw operations stay open" =
@@ -564,12 +564,14 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
       (* Raw operations keep the payload row open, so a narrow failure unifies
          upward into a domain that merely contains it. *)
       let raw_open id = fail ~pos:__POS__ (`Missing_item id) in
-      let widened : (int, Printer_storage.error) Err.t = raw_open 7 in
+      let widened : (int, Printer_storage.error) Err_trace.t = raw_open 7 in
       print_endline (Format.asprintf "%a" Printer_storage.pp_error (Error.kind (get_error widened)));
       [%expect {| storage item 7 is missing |}];
       (* The bound domain produces exactly [Printer_storage.error]. It is the
          same value the raw call produces: only the printer is pre-supplied. *)
-      let bound : (int, Printer_storage.error) Err.t = Bound.fail ~pos:("fixture.ml", 572, 71, 78) (`Missing_item 7) in
+      let bound : (int, Printer_storage.error) Err_trace.t =
+        Bound.fail ~pos:("fixture.ml", 572, 71, 78) (`Missing_item 7)
+      in
       let raw = fail ~pos:("fixture.ml", 573, 26, 33) ~pp_error:Printer_storage.pp_error (`Missing_item 7) in
       print_endline (Format.asprintf "%a" Bound.Error.pp (get_error bound));
       print_endline (Format.asprintf "%a" (Error.pp Printer_storage.pp_error) (get_error raw));
@@ -591,9 +593,9 @@ let%expect_test "a bound domain fixes the row while raw operations stay open" =
       (* [Error.t] is covariant, so a bound value still widens by coercion. This
          is the escape valve for the row the functor closed. A value that must
          stay open is built by the raw operations instead: [Bound.fail] used
-         where [(int, [ `Missing_item of int ]) Err.t] is expected would not
+         where [(int, [ `Missing_item of int ]) Err_trace.t] is expected would not
          typecheck, because it produces the whole [Printer_storage.error]. *)
-      let coerced = (bound :> (int, Printer_wide.error) Err.t) in
+      let coerced = (bound :> (int, Printer_wide.error) Err_trace.t) in
       print_endline (Format.asprintf "%a" Printer_wide.pp_error (Error.kind (get_error coerced)));
       [%expect {| storage item 7 is missing |}];
       (* The bound domain covers the operations whose printer is mandatory. *)
@@ -620,7 +622,7 @@ let%expect_test "accumulation reports every failure with its own origin" =
         if value mod 2 = 0 then fail ~pos:("fixture.ml", 620, 42, 49) (`Even value) else return (value * 10)
       in
       let result = Accum.map ~pos:__POS__ check [ 1; 2; 3; 4 ] in
-      (* Every element runs, unlike Err.List.map which stops at the first error. *)
+      (* Every element runs, unlike Err_trace.List.map which stops at the first error. *)
       print_endline (String.concat "," (Stdlib.List.map string_of_int (Stdlib.List.rev !visited)));
       let pp_even ppf = function `Even value -> Format.fprintf ppf "%d is even" value in
       print_endline (Format.asprintf "%a" (Accum.pp_errors pp_even) (Error.kind (get_error result)));
@@ -656,12 +658,12 @@ let%expect_test "accumulation reports every failure with its own origin" =
       [%expect {| 10,30 |}];
       let count = function Ok _ -> 0 | Error error -> Stdlib.List.length (Error.kind error) in
       Printf.printf "%d,%d,%d,%d\n"
-        (count (Accum.iter ~pos:__POS__ (fun value -> Err.map (fun _ -> ()) (check value)) [ 2; 4; 6 ]))
+        (count (Accum.iter ~pos:__POS__ (fun value -> Err_trace.map (fun _ -> ()) (check value)) [ 2; 4; 6 ]))
         (count (Accum.all ~pos:__POS__ [ check 1; check 2; check 4 ]))
         (count (Accum.both ~pos:__POS__ (check 2) (check 4)))
         (count (Accum.both ~pos:__POS__ (check 1) (check 4)));
       [%expect {| 3,2,2,1 |}];
-      (* The outer wrapper is an ordinary Err.t, so it composes. *)
+      (* The outer wrapper is an ordinary Err_trace.t, so it composes. *)
       let described =
         Accum.map ~pos:__POS__ check [ 2 ]
         |> map_error ~pos:__POS__ (fun errors -> `Invalid (Stdlib.List.length errors))
@@ -705,7 +707,7 @@ let%expect_test "escape exits its own frame and cannot cross a nested one" =
       (* Only the throw records an event; with_escape records none. *)
       print_endline (action_names (get_error outer));
       [%expect {| detect |}];
-      (* or_throw bridges an ordinary Err.t-returning call into the walk,
+      (* or_throw bridges an ordinary Err_trace.t-returning call into the walk,
          preserving the wrapper the callee built rather than rebuilding it. *)
       let bridged = Escape.with_escape (fun token -> Escape.or_throw token (fail ~pos:__POS__ (`Bad 3)) + 1) in
       print_endline (show bridged);
@@ -734,7 +736,7 @@ let%expect_test "escape exits its own frame and cannot cross a nested one" =
       [%expect
         {|
         exited
-        Err.Escape.throw called after its with_escape call returned (at fixture.ml:732:46-53)
+        Err_trace.Escape.throw called after its with_escape call returned (at fixture.ml:732:46-53)
         |}];
       (* Deep recursion is the reason this exists: no result is threaded. *)
       let deep =
@@ -1020,7 +1022,7 @@ let%expect_test "a foreign exception keeps its identity and backtrace through bo
      Preserving the original backtrace uses a primitive that is unavailable on
      some backends, so the library reattaches one only when it has resolvable
      frames. Fetching that raw backtrace is independent of the provenance
-     policy: Config.Never must not move the raise site to Err.reraise. *)
+     policy: Config.Never must not move the raise site to Err_trace.reraise. *)
   let failure_line = __LINE__ + 1 in
   let[@inline never] raise_foreign () = raise (Failure "foreign") in
   let backtrace_is_preserved_or_unresolvable () =
@@ -1324,8 +1326,7 @@ let%expect_test "native stacks render from slots without runtime wording" =
   let has_prefix prefix line =
     String.length line >= String.length prefix && String.sub line 0 (String.length prefix) = prefix
   in
-  let mentions_err_ml line =
-    let needle = "err.ml" in
+  let mentions needle line =
     let rec from index =
       index + String.length needle <= String.length line
       && (String.sub line index (String.length needle) = needle || from (index + 1))
@@ -1344,8 +1345,10 @@ let%expect_test "native stacks render from slots without runtime wording" =
           print_bool
             ((not available)
             || not (Stdlib.List.exists (fun line -> has_prefix "Raised" line || has_prefix "Called" line) lines));
-          print_bool ((not available) || not (mentions_err_ml (Stdlib.List.hd lines))));
+          print_bool ((not available) || not (mentions "err_trace.ml" (Stdlib.List.hd lines)));
+          print_bool ((not available) || not (Stdlib.List.exists (mentions "Err_trace.") lines)));
   [%expect {|
+    true
     true
     true
     true

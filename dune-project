@@ -20,7 +20,7 @@
  (allow_empty)
  (synopsis "Typed recoverable errors with bounded provenance, for Melange")
  (description
-  "The err_trace library built in Melange mode. Melange projects depend on this package instead of err_trace; both provide the module Err.")
+  "The err_trace library built in Melange mode. Melange projects depend on this package instead of err_trace; both provide the module Err_trace.")
  (depends
   (ocaml
    (>= 4.12.0))

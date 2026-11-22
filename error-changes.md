@@ -31,8 +31,8 @@ captured by printer closures.
 
 ## Configuration constructors return traced typed errors
 
-`Config.make` returns `(Config.t, Config.make_error) Err.t`, and
-`Config.of_strings` returns `(Config.t, Config.of_strings_error) Err.t`, rather
+`Config.make` returns `(Config.t, Config.make_error) Err_trace.t`, and
+`Config.of_strings` returns `(Config.t, Config.of_strings_error) Err_trace.t`, rather
 than a bare `(Config.t, string) result`. Their error languages are closed
 polymorphic variants describing the invalid limit, input spelling, or unknown
 mode/action. Both constructors automatically provide their error printer when
@@ -60,7 +60,7 @@ prevents different wrappers from implementing inconsistent behavior.
 In addition to the baseline printers, the API supplies printers for
 `Source.pos`, `Action.Set.t`, `Config.backtrace`, `Config.limit`, both
 configuration error languages, `Config.t`, `Monitor.t`, `Monitor.callback`, and
-the top-level `('a, 'e) Err.t`. Function-valued callbacks are intentionally
+the top-level `('a, 'e) Err_trace.t`. Function-valued callbacks are intentionally
 rendered as the opaque marker `<callback>`; monitor handles render only their
 observable installed/removed state.
 
@@ -116,15 +116,15 @@ Eager registration removes that publication race without adding a threads
 dependency or weakening OCaml 4.12 and JavaScript portability; the printer only
 matches the library's private exception constructor.
 
-## `Err.Accum` provides applicative accumulation
+## `Err_trace.Accum` provides applicative accumulation
 
 The baseline lists "accumulating independent validation errors through monadic
 bind" among the things it deliberately leaves out, and its "Independent
 validation accumulation" section declines to supply an in-library adapter,
 proposing that each validator declare
-`val validate_all : Input.t -> (unit, validation_error Err.Error.t list) Stdlib.result`
-and build items with `Err.Error.make`. The implementation ships `Err.Accum`,
-whose traversals return `('b list, 'e Error.t list) Err.t`.
+`val validate_all : Input.t -> (unit, validation_error Err_trace.Error.t list) Stdlib.result`
+and build items with `Err_trace.Error.make`. The implementation ships `Err_trace.Accum`,
+whose traversals return `('b list, 'e Error.t list) Err_trace.t`.
 
 Motivation: `bind` remains short-circuiting, so the baseline's actual
 prohibition is honored; the deviation is only about who writes the adapter. Two
@@ -137,11 +137,11 @@ rather than the bare payload keeps every failure's own detection origin, which
 is what makes a multi-diagnostic report point at each problem; a payload list
 would collapse them onto the traversal's own call site.
 
-## `Err.Make` binds one printer per domain
+## `Err_trace.Make` binds one printer per domain
 
 The baseline supplies `pp_error` at each event-producing call and offers no way
-to bind it. The implementation adds `Err.Domain`, `Err.S`, and
-`Err.Make`, covering exactly the operations that take a printer.
+to bind it. The implementation adds `Err_trace.Domain`, `Err_trace.S`, and
+`Err_trace.Make`, covering exactly the operations that take a printer.
 
 Motivation: a domain has one printer, always. One consumer defined thirteen
 private wrappers whose entire purpose was binding that argument and still wrote
@@ -149,7 +149,7 @@ private wrappers whose entire purpose was binding that argument and still wrote
 as a mandatory argument that no cheap wrapper removes. The functor introduces no
 new types -- `Make(D).fail` is `fail ~pp_error:D.pp_error` -- so bound and
 unbound values are the same values, and a module that already exposes `error`
-and `pp_error` satisfies `Err.Domain` without further work.
+and `pp_error` satisfies `Err_trace.Domain` without further work.
 
 The functor pays in modules that mostly use one domain. A printer declared with
 a `[< error ]` argument is accepted; the functor's operations are fixed at the
@@ -160,11 +160,11 @@ bound value to widen by coercion. A record-shaped binder was rejected outright:
 its payload parameter is contravariant, so the natural top-level binding does
 not even generalize.
 
-## `Err.Escape` provides a scoped non-local exit
+## `Err_trace.Escape` provides a scoped non-local exit
 
 The baseline excludes state monads, general transformers, and an effects
 framework, but says nothing about a scoped exception. The implementation adds
-`Err.Escape` with `with_escape`, `throw`, `throw_error`, `or_throw`, and the
+`Err_trace.Escape` with `with_escape`, `throw`, `throw_error`, `or_throw`, and the
 `Escaped_after_exit` diagnostic.
 
 Motivation: a deeply recursive walk cannot thread a result through every arm
@@ -172,7 +172,7 @@ without being rewritten around the monad, so consumers reach for an exception.
 Five modules in one repository independently declared the same private exception
 and catcher, and one of them carried a bare payload rather than an `Error.t`,
 losing the wrapper across its own internal boundary because nothing checked.
-`Err.protect` already solved the catching half and had zero uses, which is a
+`Err_trace.protect` already solved the catching half and had zero uses, which is a
 discoverability failure as much as a missing function; the two are now
 documented together as one idiom.
 
@@ -193,7 +193,7 @@ event, and therefore does not allocate a second generative exception. The docs
 also show the explicit coercion wrapper needed when `or_throw` consumes an open
 sub-row; that coercion is static and must not masquerade as a semantic map.
 
-## `Err.Accum` can enter and leave its batch domain
+## `Err_trace.Accum` can enter and leave its batch domain
 
 Adoption feedback found that the original traversal API made accumulation a
 one-way signature change: a locally accumulating validator could not then bind
@@ -273,7 +273,7 @@ idea that way on the `trace` axis. Applying the same whitespace rule to numeric
 limits makes the public statement that surrounding whitespace is ignored true
 for every host-provided setting rather than only for mode names.
 
-## `Err.List` gains two-list and predicate traversals
+## `Err_trace.List` gains two-list and predicate traversals
 
 The baseline lists `map`, `iter`, and `fold_left`. The implementation adds
 `map2`, `iter2`, `filter_map`, `exists`, and `for_all`.
@@ -309,7 +309,7 @@ interface changes.
 
 ## Re-raising reattaches a backtrace only when it has resolvable frames
 
-`Err.protect` and `Err.Escape.with_escape` re-raise the exceptions they do not
+`Err_trace.protect` and `Err_trace.Escape.with_escape` re-raise the exceptions they do not
 absorb. Both previously called `Printexc.raise_with_backtrace` whenever the
 active policy had captured a raw backtrace. They now fetch the original raw
 backtrace independently of the tracing policy, reattach it when it has

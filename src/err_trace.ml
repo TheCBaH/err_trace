@@ -200,7 +200,10 @@ module Stack = struct
 
   let is_own_frame slot =
     match Printexc.Slot.name slot with
-    | Some name -> String.length name >= 4 && String.sub name 0 4 = "Err."
+    | Some name ->
+        let prefix = "Err_trace." in
+        let n = String.length prefix in
+        String.length name >= n && String.sub name 0 n = prefix
     | None -> false
 
   let rec drop_own_frames = function slot :: slots when is_own_frame slot -> drop_own_frames slots | slots -> slots
@@ -246,7 +249,7 @@ end
 
    This raw backtrace is captured independently of the tracing policy. The
    policy controls provenance retained in typed errors; it must not change the
-   semantics of an unrelated exception that merely crosses an Err boundary. *)
+   semantics of an unrelated exception that merely crosses an Err_trace boundary. *)
 (* Whether [Printexc.raise_with_backtrace] works on this backend, found once at
    start-up (spike S3): true natively and under js_of_ocaml, false on Melange,
    where it throws "not polyfilled". The probe replaces the backtrace of the
@@ -809,7 +812,7 @@ module Escape = struct
   let printer = function
     | Escaped_after_exit source ->
         let where = match source with None -> "" | Some source -> Format.asprintf " (at %a)" Source.pp source in
-        Some ("Err.Escape.throw called after its with_escape call returned" ^ where)
+        Some ("Err_trace.Escape.throw called after its with_escape call returned" ^ where)
     | _ -> None
 
   let () = Printexc.register_printer printer
@@ -987,7 +990,7 @@ end
 
 (* Every operation here is its unbound counterpart with [D.pp_error] supplied, so
    values built through the functor and values built directly are the same
-   values. Only operations that take a printer appear; the rest stay in [Err]. *)
+   values. Only operations that take a printer appear; the rest stay in [Err_trace]. *)
 module Make (D : Domain) : S with type error = D.error = struct
   type error = D.error
 

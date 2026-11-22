@@ -14,9 +14,9 @@ let pp_error ppf = function
   | `Remote message -> Fmt.pf ppf "remote error %S" message
 
 let config =
-  Err.Config.make
-    ~actions:(Err.Action.Set.of_list [ Err.Action.Import; Err.Action.Export ])
-    ~backtrace:Err.Config.Never ~max_events:8 ~max_frames:0 ~max_external_bytes:64
+  Err_trace.Config.make
+    ~actions:(Err_trace.Action.Set.of_list [ Err_trace.Action.Import; Err_trace.Action.Export ])
+    ~backtrace:Err_trace.Config.Never ~max_events:8 ~max_frames:0 ~max_external_bytes:64
   |> Result.get_ok
 
 let contains_substring text substring =
@@ -27,11 +27,11 @@ let contains_substring text substring =
   in
   substring_length = 0 || loop 0
 
-let export_wire (result : (int, error Err.Error.t) result) =
-  match Err.mark_error `Export result with
+let export_wire (result : (int, error Err_trace.Error.t) result) =
+  match Err_trace.mark_error `Export result with
   | Ok value -> `Assoc [ ("ok", `Bool true); ("value", `Int value) ]
   | Error error -> (
-      match Err.Error.kind error with
+      match Err_trace.Error.kind error with
       | `Missing field ->
           `Assoc
             [
@@ -51,7 +51,7 @@ let export_wire (result : (int, error Err.Error.t) result) =
               ("traceId", `Null);
             ])
 
-let import_wire wire : (unit, error Err.Error.t) result =
+let import_wire wire : (unit, error Err_trace.Error.t) result =
   match wire with
   | `Assoc fields -> (
       match List.assoc_opt "code" fields with
@@ -59,14 +59,14 @@ let import_wire wire : (unit, error Err.Error.t) result =
           let message =
             match List.assoc_opt "message" fields with Some (`String message) -> message | _ -> "unknown"
           in
-          Err.import (fun message -> `Remote message) (Error message)
+          Err_trace.import (fun message -> `Remote message) (Error message)
       | _ -> invalid_arg "unsupported wire error")
   | _ -> invalid_arg "wire error must be an object"
 
 let () =
-  Err.Config.set config;
-  let failure = Err.fail ~pos:("secret/server.ml", 9, 1, 7) (`Missing "token") in
-  let rendered = Fmt.str "@[<v>before@,%a@,after@]" (Err.Error.pp pp_error) (Result.get_error failure) in
+  Err_trace.Config.set config;
+  let failure = Err_trace.fail ~pos:("secret/server.ml", 9, 1, 7) (`Missing "token") in
+  let rendered = Fmt.str "@[<v>before@,%a@,after@]" (Err_trace.Error.pp pp_error) (Result.get_error failure) in
   assert (has_prefix ~prefix:"before\nmissing field" rendered);
   assert (has_suffix ~suffix:"after" rendered);
   let wire = export_wire failure in
@@ -76,8 +76,8 @@ let () =
   assert (not (contains_substring json "server.ml"));
   let imported = import_wire (`Assoc [ ("code", `String "remote"); ("message", `String "offline") ]) in
   let imported_error = Result.get_error imported in
-  assert (Err.Error.kind imported_error = `Remote "offline");
-  assert (Err.Error.events imported_error |> List.map Err.Event.action = [ Err.Action.Import ]);
+  assert (Err_trace.Error.kind imported_error = `Remote "offline");
+  assert (Err_trace.Error.events imported_error |> List.map Err_trace.Event.action = [ Err_trace.Action.Import ]);
   let buffer = Buffer.create 128 in
   let formatter = Format.formatter_of_buffer buffer in
   let previous_reporter = Logs.reporter () in
@@ -86,17 +86,17 @@ let () =
   Logs.set_level (Some Logs.Error);
   let observations = ref 0 in
   let monitor =
-    Err.Monitor.install ~actions:(Err.Action.Set.of_list [ Err.Action.Export ]) (fun observation ->
+    Err_trace.Monitor.install ~actions:(Err_trace.Action.Set.of_list [ Err_trace.Action.Export ]) (fun observation ->
         incr observations;
-        Logs.err (fun message -> message "%a" Err.Observation.pp observation))
+        Logs.err (fun message -> message "%a" Err_trace.Observation.pp observation))
   in
   Fun.protect
     ~finally:(fun () ->
-      ignore (Err.Monitor.remove monitor);
+      ignore (Err_trace.Monitor.remove monitor);
       Logs.set_reporter previous_reporter;
       Logs.set_level previous_level)
     (fun () ->
-      ignore (Err.to_exn ~pp_error (Result.get_error (Err.fail (`Remote "logger"))));
+      ignore (Err_trace.to_exn ~pp_error (Result.get_error (Err_trace.fail (`Remote "logger"))));
       Format.pp_print_flush formatter ());
   assert (!observations = 1);
   assert (contains_substring (Buffer.contents buffer) "export")

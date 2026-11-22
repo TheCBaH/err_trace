@@ -1,9 +1,9 @@
 opam-version: "2.0"
-version: "0.2.0~dev"
+version: "0.3.0"
 synopsis: "Typed recoverable errors with bounded provenance, for Melange"
 description: """
 The err_trace library built in Melange mode. Melange projects depend on this
-package instead of err_trace; both provide the module Err.
+package instead of err_trace; both provide the module Err_trace.
 """
 maintainer: "err_trace maintainers"
 authors: ["Vladimir N. Silyaev"]

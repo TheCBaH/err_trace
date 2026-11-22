@@ -3,4 +3,4 @@
  (public_name err_trace)
  (synopsis "Typed recoverable errors with bounded provenance")
  (wrapped false)
- (modules err))
+ (modules err_trace))

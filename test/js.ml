@@ -16,21 +16,21 @@ let public_error message =
       ("traceId", Js.Unsafe.inject Js.null);
     |]
 
-let outcome (result : ('a, error Err.Error.t) result) =
+let outcome (result : ('a, error Err_trace.Error.t) result) =
   match result with
   | Ok value -> Js.Unsafe.obj [| ("ok", Js.Unsafe.inject Js._true); ("value", Js.Unsafe.inject value) |]
   | Error error ->
-      let message = Format.asprintf "%a" pp_error (Err.Error.kind error) in
+      let message = Format.asprintf "%a" pp_error (Err_trace.Error.kind error) in
       Js.Unsafe.obj [| ("ok", Js.Unsafe.inject Js._false); ("error", Js.Unsafe.inject (public_error message)) |]
 
 let import_javascript_error ~pos error =
   let stack =
     match Js.Js_error.stack error with
     | None -> None
-    | Some stack -> Some (Err.Stack.of_external ~runtime:"JavaScript" ~stack)
+    | Some stack -> Some (Err_trace.Stack.of_external ~runtime:"JavaScript" ~stack)
   in
-  let origin = Err.Origin.make ~source:(Err.Source.of_pos pos) ?stack () in
-  Error (Err.Error.make_at ~origin (`Expected (Js.Js_error.message error))) |> Err.mark_error ~pos `Catch
+  let origin = Err_trace.Origin.make ~source:(Err_trace.Source.of_pos pos) ?stack () in
+  Error (Err_trace.Error.make_at ~origin (`Expected (Js.Js_error.message error))) |> Err_trace.mark_error ~pos `Catch
 
 let protect_javascript ~pos ~expected f =
   try Ok (f ())
@@ -38,8 +38,8 @@ let protect_javascript ~pos ~expected f =
     if expected error then import_javascript_error ~pos error else Js.Js_error.raise_ error
 
 let export_javascript_error error =
-  let error = Err.mark_error `Export (Error error) |> Result.get_error in
-  let message = Format.asprintf "%a" (Err.Error.pp pp_error) error in
+  let error = Err_trace.mark_error `Export (Error error) |> Result.get_error in
+  let message = Format.asprintf "%a" (Err_trace.Error.pp pp_error) error in
   new%js Js.error_constr (Js.string message)
 
 let settle_expected promise =
@@ -48,11 +48,12 @@ let settle_expected promise =
 let config = Portable_checks.config
 
 let () =
-  Err.Config.set (config (Err.Action.Set.of_list [ Err.Action.Catch; Err.Action.Export; Err.Action.Map ]) 8);
+  Err_trace.Config.set
+    (config (Err_trace.Action.Set.of_list [ Err_trace.Action.Catch; Err_trace.Action.Export; Err_trace.Action.Map ]) 8);
   let success = outcome (Ok 7) in
   assert_true (Js.to_bool (field success "ok"));
   assert_true ((field success "value" : int) = 7);
-  let failure = outcome (Err.fail (`Expected "domain")) in
+  let failure = outcome (Err_trace.fail (`Expected "domain")) in
   assert_true (not (Js.to_bool (field failure "ok")));
   let public = field failure "error" in
   assert_true (Js.to_string (field public "code") = "expected");
@@ -78,7 +79,7 @@ let () =
   assert_true (Js.instanceof native_export Js.error_constr);
   Portable_checks.run ~check;
   let expected_promise =
-    Promise.resolve (Err.fail (`Expected "promise"))
+    Promise.resolve (Err_trace.fail (`Expected "promise"))
     |> settle_expected
     |> Promise.map (fun result -> assert_true (not (Js.to_bool (field result "ok"))))
   in

@@ -11,7 +11,7 @@ let boxed value = (Obj.magic value : Obj.t)
 let outcome = function
   | Ok value -> Js.Dict.fromList [ ("ok", boxed true); ("value", boxed value) ]
   | Error error ->
-      let message = Format.asprintf "%a" pp_error (Err.Error.kind error) in
+      let message = Format.asprintf "%a" pp_error (Err_trace.Error.kind error) in
       let public =
         Js.Dict.fromList
           [ ("code", boxed "expected"); ("message", boxed message); ("details", boxed None); ("traceId", boxed None) ]
@@ -24,11 +24,11 @@ let import_javascript_error ~pos error =
   let stack =
     match Js.Exn.stack error with
     | None -> None
-    | Some stack -> Some (Err.Stack.of_external ~runtime:"JavaScript" ~stack)
+    | Some stack -> Some (Err_trace.Stack.of_external ~runtime:"JavaScript" ~stack)
   in
   let message = Option.value ~default:"JavaScript error" (Js.Exn.message error) in
-  let origin = Err.Origin.make ~source:(Err.Source.of_pos pos) ?stack () in
-  Error (Err.Error.make_at ~origin (`Expected message)) |> Err.mark_error ~pos `Catch
+  let origin = Err_trace.Origin.make ~source:(Err_trace.Source.of_pos pos) ?stack () in
+  Error (Err_trace.Error.make_at ~origin (`Expected message)) |> Err_trace.mark_error ~pos `Catch
 
 let protect_javascript ~pos ~expected f =
   try Ok (f ())
@@ -38,18 +38,19 @@ let protect_javascript ~pos ~expected f =
     | Some _ | None -> raise exn)
 
 let export_javascript_error error =
-  let error = Err.mark_error `Export (Error error) |> Result.get_error in
-  make_error (Format.asprintf "%a" (Err.Error.pp pp_error) error)
+  let error = Err_trace.mark_error `Export (Error error) |> Result.get_error in
+  make_error (Format.asprintf "%a" (Err_trace.Error.pp pp_error) error)
 
 let settle_expected promise = Js.Promise.then_ (fun result -> Js.Promise.resolve (outcome result)) promise
 let config = Portable_checks.config
 
 let () =
-  Err.Config.set (config (Err.Action.Set.of_list [ Err.Action.Catch; Err.Action.Export; Err.Action.Map ]) 8);
+  Err_trace.Config.set
+    (config (Err_trace.Action.Set.of_list [ Err_trace.Action.Catch; Err_trace.Action.Export; Err_trace.Action.Map ]) 8);
   let success = outcome (Ok 7) in
   assert_true (Obj.magic (get success "ok") = true);
   assert_true (Obj.magic (get success "value") = 7);
-  let failure = outcome (Err.fail (`Expected "domain")) in
+  let failure = outcome (Err_trace.fail (`Expected "domain")) in
   assert_true (Obj.magic (get failure "ok") = false);
   let public : outcome = Obj.magic (get failure "error") in
   assert_true (Obj.magic (get public "code") = "expected");
@@ -74,7 +75,7 @@ let () =
   assert_true (Js.Exn.message native_export <> None);
   Portable_checks.run ~check;
   let expected_promise =
-    Js.Promise.resolve (Err.fail (`Expected "promise"))
+    Js.Promise.resolve (Err_trace.fail (`Expected "promise"))
     |> settle_expected
     |> Js.Promise.then_ (fun result ->
         assert_true (Obj.magic (get result "ok") = false);

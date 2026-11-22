@@ -1,14 +1,21 @@
 # Changes
 
-## Unreleased (0.2.0~dev, after 0.1.0)
+## Unreleased (0.3.0, after 0.1.0)
 
 ### Breaking
 
+- The library's module is renamed `Err` to `Err_trace` (`src/err_trace.ml`),
+  so the package no longer claims the global name `Err`. Code that wants the
+  short name depends on the new `err_trace.err` (or `err_trace-melange.err`)
+  alias library, an unwrapped `Err` that is `include Err_trace`; its types
+  equal `Err_trace`'s. Backtrace frames named `Err_trace.*` are the ones
+  filtered from rendered stacks, and the `Err_trace.Escape.throw` message
+  uses the new name.
 - The policy in force at start-up is now `Config.deterministic` (boundary
   events, no automatic stacks). It used to capture an origin stack for every
   error. `Config.default` is renamed `Config.with_stacks`; there is no
   `Config.default` any more. Programs that relied on start-up stacks call
-  `Err.Config.set Err.Config.with_stacks`. Absent `Config.of_strings` settings
+  `Err_trace.Config.set Err_trace.Config.with_stacks`. Absent `Config.of_strings` settings
   are read from `Config.deterministic`.
 - `Config.make` and `Config.of_strings` reject `max_events` above 4096
   (`` `Limit_too_large ``).
@@ -20,13 +27,13 @@
 - `Config.of_strings` limits are digits only: `0x10`, `0b11` and `1_000` are
   no longer accepted, and an overflow is `` `Limit_too_large `` on every word
   size.
-- `Err.mark_error` (and `Make(D).mark_error`) takes `Action.marking`, the polymorphic
+- `Err_trace.mark_error` (and `Make(D).mark_error`) takes `Action.marking`, the polymorphic
   variant `` [ `Filter | `Catch | `Import | `Export ] ``, instead of `Action.t`:
   `Detect`, `Map` and `Raise` have their own operations and could only forge a
-  transition by hand. Write `` Err.mark_error `Import `` for `Err.mark_error
-  Err.Action.Import`; use `map_error Fun.id` for a bare `Map` event.
+  transition by hand. Write `` Err_trace.mark_error `Import `` for `Err_trace.mark_error
+  Err_trace.Action.Import`; use `map_error Fun.id` for a bare `Map` event.
   `Action.t` is documented as a closed variant.
-- `Err.protect` keeps at most `max_frames` frames of a caught stack, and none
+- `Err_trace.protect` keeps at most `max_frames` frames of a caught stack, and none
   for `max_frames = 0`. A cut stack has no raw form, so
   `Stack.to_raw_backtrace` returns `None` for it.
 
@@ -47,9 +54,9 @@
 
 ### Added
 
-- `Err.Located`, the operations that take `?pos` with `~pos` mandatory
+- `Err_trace.Located`, the operations that take `?pos` with `~pos` mandatory
   (`Located.Make(D)` binds a domain printer as `Make(D)` does), and
-  `Err.Stats.unlocated`, a count of events recorded without a position;
+  `Err_trace.Stats.unlocated`, a count of events recorded without a position;
   `Accum.Syntax` (`let+`, `and+`); `Observation.is_creation`; `Monitor.install ?on_failure` and
   `Monitor.last_failure`; `Action.Set.add`, `remove`, `union`, `to_list`,
   `equal`; `Source.to_pos`; `Stack.to_external`; `Exn.origin`, `events`,

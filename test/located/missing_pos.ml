@@ -1,1 +1,1 @@
-let _ : (unit, string) Err.t = Err.Located.fail "no position given"
+let _ : (unit, string) Err_trace.t = Err_trace.Located.fail "no position given"

@@ -7,39 +7,41 @@ let has_prefix ~prefix value =
 let pp_error ppf = function `Jane_street error -> Format.pp_print_string ppf (Base.Error.to_string_hum error)
 
 let config =
-  Err.Config.make
-    ~actions:(Err.Action.Set.of_list [ Err.Action.Import; Err.Action.Export ])
-    ~backtrace:Err.Config.Never ~max_events:8 ~max_frames:0 ~max_external_bytes:0
+  Err_trace.Config.make
+    ~actions:(Err_trace.Action.Set.of_list [ Err_trace.Action.Import; Err_trace.Action.Export ])
+    ~backtrace:Err_trace.Config.Never ~max_events:8 ~max_frames:0 ~max_external_bytes:0
   |> Result.get_ok
 
-let import_or_error (result : ('a, Base.Error.t) result) : ('a, error Err.Error.t) result =
-  Err.import (fun error -> `Jane_street error) result
+let import_or_error (result : ('a, Base.Error.t) result) : ('a, error Err_trace.Error.t) result =
+  Err_trace.import (fun error -> `Jane_street error) result
 
 let export_or_error result : int Base.Or_error.t =
-  result |> Err.mark_error `Export
-  |> Stdlib.Result.map_error (fun error -> Base.Error.of_string (Format.asprintf "%a" (Err.Error.pp pp_error) error))
+  result |> Err_trace.mark_error `Export
+  |> Stdlib.Result.map_error (fun error ->
+      Base.Error.of_string (Format.asprintf "%a" (Err_trace.Error.pp pp_error) error))
 
 let deferred_map f deferred = Async_kernel.Deferred.map deferred ~f
 
 let () =
-  Err.Config.set config;
+  Err_trace.Config.set config;
   assert (import_or_error (Ok 4) = Ok 4);
   let imported = import_or_error (Base.Or_error.error_string "base failure") in
   let imported_error = Result.get_error imported in
   assert (
-    match Err.Error.kind imported_error with `Jane_street error -> Base.Error.to_string_hum error = "base failure");
-  assert (Err.Error.events imported_error |> List.map Err.Event.action = [ Err.Action.Import ]);
+    match Err_trace.Error.kind imported_error with
+    | `Jane_street error -> Base.Error.to_string_hum error = "base failure");
+  assert (Err_trace.Error.events imported_error |> List.map Err_trace.Event.action = [ Err_trace.Action.Import ]);
   let exported = export_or_error imported in
   assert (
     match exported with
     | Error error -> has_prefix ~prefix:"base failure" (Base.Error.to_string_hum error)
     | Ok _ -> false);
   let deferred = Async_kernel.Deferred.return imported in
-  let deferred = deferred_map (Err.map Fun.id) deferred in
+  let deferred = deferred_map (Err_trace.map Fun.id) deferred in
   Async_kernel.Async_kernel_scheduler.Expert.run_cycles_until_no_jobs_remain ();
   assert (
     match Async_kernel.Deferred.peek deferred with
-    | Some (Error error) -> Err.Error.kind error = Err.Error.kind imported_error
+    | Some (Error error) -> Err_trace.Error.kind error = Err_trace.Error.kind imported_error
     | _ -> false);
   let exception_result =
     Async_kernel.try_with ~extract_exn:true ~run:`Schedule (fun () ->

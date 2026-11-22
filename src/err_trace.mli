@@ -22,15 +22,15 @@ end
 
 module Stack : sig
   type t
-  (** A native stack or a bounded stack imported from another runtime. A stack caught by {!Err.protect} is cut to
-      {!Err.Config.max_frames} frames before it is retained. *)
+  (** A native stack or a bounded stack imported from another runtime. A stack caught by {!Err_trace.protect} is cut to
+      {!Err_trace.Config.max_frames} frames before it is retained. *)
 
   val of_raw_backtrace : Printexc.raw_backtrace -> t
   (** Wrap a native raw backtrace. *)
 
   val of_external : runtime:string -> stack:string -> t
-  (** Import a foreign runtime's stack string, bounded by {!Err.Config.max_external_bytes}. A longer stack is cut back
-      to its last whole line, or to a UTF-8 character boundary when no line break fits. [runtime] is a short label
+  (** Import a foreign runtime's stack string, bounded by {!Err_trace.Config.max_external_bytes}. A longer stack is cut
+      back to its last whole line, or to a UTF-8 character boundary when no line break fits. [runtime] is a short label
       chosen by the caller and is not bounded.
 
       This serves one narrow case: a JavaScript host that hands your program its own stack, which an adapter imports
@@ -46,8 +46,8 @@ module Stack : sig
 
   val to_raw_backtrace : t -> Printexc.raw_backtrace option
   (** The native backtrace this stack was built from, when all of it was kept. [None] for an imported external stack,
-      and for a native stack that {!Err.protect} cut to {!Err.Config.max_frames}: a prefix of frames cannot be turned
-      back into a raw backtrace, so use {!pp} to see what was retained. *)
+      and for a native stack that {!Err_trace.protect} cut to {!Err_trace.Config.max_frames}: a prefix of frames cannot
+      be turned back into a raw backtrace, so use {!pp} to see what was retained. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render the stack. *)
@@ -86,9 +86,9 @@ module Action : sig
     | Export  (** [Detect] creates a failure; other constructors describe semantic boundaries. *)
 
   type marking = [ `Filter | `Catch | `Import | `Export ]
-  (** The actions {!Err.mark_error} may add to an existing error: a boundary the error crosses. [Detect], [Map] and
-      [Raise] describe an error being created, converted or raised, which {!Err.fail}, {!Err.map_error} and
-      {!Err.raise_error} do, so marking one by hand could record a transition that did not happen. *)
+  (** The actions {!Err_trace.mark_error} may add to an existing error: a boundary the error crosses. [Detect], [Map]
+      and [Raise] describe an error being created, converted or raised, which {!Err_trace.fail}, {!Err_trace.map_error}
+      and {!Err_trace.raise_error} do, so marking one by hand could record a transition that did not happen. *)
 
   val pp : Format.formatter -> t -> unit
   (** Render the action name. *)
@@ -108,7 +108,7 @@ module Action : sig
 
     val boundaries : t
     (** Select every action except [Detect]: the transitions where an error crosses a boundary, as opposed to the point
-        at which it is created. This is the spelling [boundaries] accepted by {!Err.Config.of_strings}. *)
+        at which it is created. This is the spelling [boundaries] accepted by {!Err_trace.Config.of_strings}. *)
 
     val of_list : action list -> t
     (** Construct a set, ignoring duplicates. *)
@@ -185,7 +185,7 @@ module Error : sig
   val pp_kind : (Format.formatter -> 'e -> unit) -> Format.formatter -> 'e t -> unit
   (** Render only the domain payload, omitting origin and events. Use at a boundary that must not emit provenance -- a
       wire response, a user-facing message, a log read by a third party -- where {!pp} would be too much. This is
-      {!Err.Exn.pp_kind} for the ordinary error wrapper. *)
+      {!Err_trace.Exn.pp_kind} for the ordinary error wrapper. *)
 end
 
 type ('a, 'e) t = ('a, 'e Error.t) result
@@ -241,7 +241,7 @@ module Config : sig
     max_frames:int ->
     max_external_bytes:int ->
     (t, make_error Error.t) result
-  (** Validate all limits and create a policy. The return type is [(t, make_error) Err.t]. *)
+  (** Validate all limits and create a policy. The return type is [(t, make_error) Err_trace.t]. *)
 
   val fast : t
   (** The cheapest policy: no semantic events at all, and no stacks. It disables the {e whole} event trail, not just
@@ -305,7 +305,7 @@ module Config : sig
   (** Parse application-supplied configuration strings without reading the environment. [trace] accepts [off],
       [boundaries], [all], or comma-separated action names; [backtrace] accepts [off] (or its constructor spelling
       [never]), [origin], or [events]. Surrounding whitespace is ignored, so the output of {!pp}, {!pp_backtrace}, and
-      {!Err.Action.Set.pp} parses back to the value that produced it. *)
+      {!Err_trace.Action.Set.pp} parses back to the value that produced it. *)
   val of_strings :
     trace:string option ->
     backtrace:string option ->
@@ -314,7 +314,7 @@ module Config : sig
     max_external_bytes:string option ->
     (t, of_strings_error Error.t) result
   (** Parse host-provided settings without reading environment variables. The return type is
-      [(t, of_strings_error) Err.t]. *)
+      [(t, of_strings_error) Err_trace.t]. *)
 end
 
 module Observation : sig
@@ -335,10 +335,11 @@ module Observation : sig
   (** Return the snapshot's dropped-event count. *)
 
   val is_creation : t -> bool
-  (** Whether this event is the one that created the error: [Detect] from {!Err.fail} and the other constructors,
-      [Filter] from {!Err.guard}, [Import] from {!Err.import}, and [Catch] from {!Err.protect}. It does not depend on
-      what the policy retains, so it stays [true] with [max_events = 0] and [false] for a later event on an error whose
-      own creation event was disabled. An {!Err.Accum} batch wrapper is not a creation: each element failure is. *)
+  (** Whether this event is the one that created the error: [Detect] from {!Err_trace.fail} and the other constructors,
+      [Filter] from {!Err_trace.guard}, [Import] from {!Err_trace.import}, and [Catch] from {!Err_trace.protect}. It
+      does not depend on what the policy retains, so it stays [true] with [max_events = 0] and [false] for a later event
+      on an error whose own creation event was disabled. An {!Err_trace.Accum} batch wrapper is not a creation: each
+      element failure is. *)
 
   val pp : Format.formatter -> t -> unit
   (** Print the complete error only when the producing boundary supplied a payload printer; otherwise print event
@@ -354,7 +355,7 @@ module Monitor : sig
 
   type callback = Observation.t -> unit
   (** A synchronous callback invoked for each matching enabled event. Callbacks must be short, non-blocking, and must
-      not produce further [Err] events. *)
+      not produce further [Err_trace] events. *)
 
   val install :
     ?actions:Action.Set.t ->
@@ -459,7 +460,7 @@ module Escape : sig
       to carry an {!Error.t} rather than a bare payload across the module's own boundary. This module is that pair, with
       the wrapper built at the throw and the catch guaranteed by construction.
 
-      It is the companion of {!Err.protect}: [protect] absorbs an exception raised by {e foreign} code, while
+      It is the companion of {!Err_trace.protect}: [protect] absorbs an exception raised by {e foreign} code, while
       [with_escape] establishes an exit for the {e current} module's own recursion.
 
       Two caveats. A catch-all handler ([try ... with _ ->]) between {!throw} and its {!with_escape} absorbs the escape
@@ -478,11 +479,12 @@ module Escape : sig
 
   val with_escape : ('e t -> 'a) -> ('a, 'e Error.t) result
   (** Run the function with a fresh token. Return [Ok] for a normal return, or [Error] carrying the wrapper from the
-      first {!throw} on that token. Any other exception propagates unchanged, with its backtrace, as in {!Err.protect}.
+      first {!throw} on that token. Any other exception propagates unchanged, with its backtrace, as in
+      {!Err_trace.protect}.
 
       Each call generates its own exception, so nested and concurrent uses cannot catch one another's escapes, and a
       throw aimed at an enclosing token passes through inner frames to the one that owns it. The return type is
-      [('a, 'e) Err.t].
+      [('a, 'e) Err_trace.t].
 
       No event is recorded here. [Catch] describes absorbing a foreign exception, and recording it would make an
       escaping walk's trace differ from that of the equivalent monadic walk. *)
@@ -496,9 +498,9 @@ module Escape : sig
       in {!Escaped_after_exit} when the token's frame has already returned. *)
 
   val or_throw : ?pos:Source.pos -> 'e t -> ('a, 'e Error.t) result -> 'a
-  (** Return the value, or exit with the existing wrapper. Its argument type is [('a, 'e) Err.t]: this is the bridge
-      that lets a recursive walk call ordinary result-returning functions without threading results through its own
-      arms. *)
+  (** Return the value, or exit with the existing wrapper. Its argument type is [('a, 'e) Err_trace.t]: this is the
+      bridge that lets a recursive walk call ordinary result-returning functions without threading results through its
+      own arms. *)
 
   val map : ('e -> 'f) -> 'f t -> 'e t
   (** View a frame through a payload conversion. Throwing through the returned token exits the same {!with_escape}
@@ -564,7 +566,7 @@ val or_raise : ?pos:Source.pos -> pp_error:(Format.formatter -> 'e -> unit) -> (
     It pays best in a module that mostly uses one error domain. Binding a printer fixes the operations obtained from
     {!Make} at that domain, so code that relies on [`Missing] inferring a smaller row before widening into several
     different domains may be clearer with the unbound operations -- or a plain function such as
-    [let fail ?pos e = Err.fail ?pos ~pp_error e]. A printer written with a [[< error ]] argument is accepted by
+    [let fail ?pos e = Err_trace.fail ?pos ~pp_error e]. A printer written with a [[< error ]] argument is accepted by
     {!Make}; the resulting operations use the domain type supplied by the functor. *)
 
 module type Domain = sig
@@ -575,12 +577,12 @@ module type Domain = sig
   (** The domain's one printer. *)
 end
 
-(** The operations of {!Err} that take a printer, with that printer already supplied. Everything else -- {!return},
-    {!bind}, {!map}, {!payload}, {!Syntax}, {!Accum}, and the {!List} traversals other than {!List.map2} and
-    {!List.iter2} -- needs no printer and stays in {!Err}.
+(** The operations of {!Err_trace} that take a printer, with that printer already supplied. Everything else --
+    {!return}, {!bind}, {!map}, {!payload}, {!Syntax}, {!Accum}, and the {!List} traversals other than {!List.map2} and
+    {!List.iter2} -- needs no printer and stays in {!Err_trace}.
 
-    Use the result qualified, as [E.fail] and [E.Error.make]. Including it in a module shadows {!Err.Error} for the rest
-    of that module; the [Error] constructor of [Stdlib.result] is unaffected. *)
+    Use the result qualified, as [E.fail] and [E.Error.make]. Including it in a module shadows {!Err_trace.Error} for
+    the rest of that module; the [Error] constructor of [Stdlib.result] is unaffected. *)
 module type S = sig
   type error
   (** The bound payload type. *)
@@ -589,55 +591,55 @@ module type S = sig
   (** The bound printer. *)
 
   val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> ('a, error Error.t) result -> unit
-  (** {!Err.pp} with the domain printer supplied. *)
+  (** {!Err_trace.pp} with the domain printer supplied. *)
 
   val fail : ?pos:Source.pos -> error -> ('a, error Error.t) result
-  (** {!Err.fail} with the domain printer supplied. *)
+  (** {!Err_trace.fail} with the domain printer supplied. *)
 
   val of_option : ?pos:Source.pos -> error -> 'a option -> ('a, error Error.t) result
-  (** {!Err.of_option} with the domain printer supplied. *)
+  (** {!Err_trace.of_option} with the domain printer supplied. *)
 
   val map_none : ?pos:Source.pos -> error:(unit -> error) -> 'a option -> ('a, error Error.t) result
-  (** {!Err.map_none} with the domain printer supplied. *)
+  (** {!Err_trace.map_none} with the domain printer supplied. *)
 
   val guard : ?pos:Source.pos -> error:error -> bool -> (unit, error Error.t) result
-  (** {!Err.guard} with the domain printer supplied. *)
+  (** {!Err_trace.guard} with the domain printer supplied. *)
 
   val map_error : ?pos:Source.pos -> ('e -> error) -> ('a, 'e Error.t) result -> ('a, error Error.t) result
-  (** {!Err.map_error} into this domain. The source domain stays polymorphic: only the destination is bound, which is
-      the domain whose printer the [Map] observation needs. *)
+  (** {!Err_trace.map_error} into this domain. The source domain stays polymorphic: only the destination is bound, which
+      is the domain whose printer the [Map] observation needs. *)
 
   val mark_error : ?pos:Source.pos -> Action.marking -> ('a, error Error.t) result -> ('a, error Error.t) result
-  (** {!Err.mark_error} with the domain printer supplied. *)
+  (** {!Err_trace.mark_error} with the domain printer supplied. *)
 
   val protect : ?pos:Source.pos -> catch:(exn -> error option) -> (unit -> 'a) -> ('a, error Error.t) result
-  (** {!Err.protect} with the domain printer supplied. *)
+  (** {!Err_trace.protect} with the domain printer supplied. *)
 
   val import : ?pos:Source.pos -> ('e -> error) -> ('a, 'e) result -> ('a, error Error.t) result
-  (** {!Err.import} into this domain. *)
+  (** {!Err_trace.import} into this domain. *)
 
   val export : ?pos:Source.pos -> ('a, error Error.t) result -> ('a, error) result
-  (** {!Err.export} with the domain printer supplied. *)
+  (** {!Err_trace.export} with the domain printer supplied. *)
 
   val to_exn : ?pos:Source.pos -> error Error.t -> exn
-  (** {!Err.to_exn} with the domain printer supplied. *)
+  (** {!Err_trace.to_exn} with the domain printer supplied. *)
 
   val export_exn : ?pos:Source.pos -> ('a, error Error.t) result -> ('a, exn) result
-  (** {!Err.export_exn} with the domain printer supplied. *)
+  (** {!Err_trace.export_exn} with the domain printer supplied. *)
 
   val raise_error : ?pos:Source.pos -> error Error.t -> 'a
-  (** {!Err.raise_error} with the domain printer supplied. *)
+  (** {!Err_trace.raise_error} with the domain printer supplied. *)
 
   val or_raise : ?pos:Source.pos -> ('a, error Error.t) result -> 'a
-  (** {!Err.or_raise} with the domain printer supplied. *)
+  (** {!Err_trace.or_raise} with the domain printer supplied. *)
 
   val with_escape : (error Escape.t -> 'a) -> ('a, error Error.t) result
-  (** {!Err.Escape.with_escape} at this domain. *)
+  (** {!Err_trace.Escape.with_escape} at this domain. *)
 
   val throw : error Escape.t -> ?pos:Source.pos -> error -> 'a
-  (** {!Err.Escape.throw} with the domain printer supplied. *)
+  (** {!Err_trace.Escape.throw} with the domain printer supplied. *)
 
-  (** The {!Err.List} traversals that can detect a failure of their own and so take a printer. *)
+  (** The {!Err_trace.List} traversals that can detect a failure of their own and so take a printer. *)
   module List : sig
     val map2 :
       ?pos:Source.pos ->
@@ -646,7 +648,7 @@ module type S = sig
       'a list ->
       'b list ->
       ('c list, error Error.t) result
-    (** {!Err.List.map2} with the domain printer supplied. *)
+    (** {!Err_trace.List.map2} with the domain printer supplied. *)
 
     val iter2 :
       ?pos:Source.pos ->
@@ -655,22 +657,22 @@ module type S = sig
       'a list ->
       'b list ->
       (unit, error Error.t) result
-    (** {!Err.List.iter2} with the domain printer supplied. *)
+    (** {!Err_trace.List.iter2} with the domain printer supplied. *)
   end
 
-  (** The {!Err.Error} operations that take a printer. *)
+  (** The {!Err_trace.Error} operations that take a printer. *)
   module Error : sig
     val make : ?pos:Source.pos -> error -> error Error.t
-    (** {!Err.Error.make} with the domain printer supplied. *)
+    (** {!Err_trace.Error.make} with the domain printer supplied. *)
 
     val map_kind : ?pos:Source.pos -> ('e -> error) -> 'e Error.t -> error Error.t
-    (** {!Err.Error.map_kind} into this domain. *)
+    (** {!Err_trace.Error.map_kind} into this domain. *)
 
     val pp : Format.formatter -> error Error.t -> unit
-    (** {!Err.Error.pp} with the domain printer supplied. *)
+    (** {!Err_trace.Error.pp} with the domain printer supplied. *)
 
     val pp_kind : Format.formatter -> error Error.t -> unit
-    (** {!Err.Error.pp_kind} with the domain printer supplied. *)
+    (** {!Err_trace.Error.pp_kind} with the domain printer supplied. *)
   end
 end
 
@@ -696,7 +698,7 @@ end
 
 module List : sig
   (** Stack-safe, left-to-right traversal that stops at the first error. For a traversal that runs every element and
-      reports every failure, see {!Err.Accum}.
+      reports every failure, see {!Err_trace.Accum}.
 
       [filter] is omitted because {!filter_map} subsumes it, and [fold_right] because it cannot be tail-recursive
       without reversing the order in which the function observes the list, which would contradict this module's
@@ -748,7 +750,8 @@ end
 
 module Accum : sig
   (** Stack-safe traversal that runs {e every} element and reports {e every} failure, for validators and batch passes
-      that must tell a user about all their problems at once. Contrast {!Err.List}, which stops at the first error.
+      that must tell a user about all their problems at once. Contrast {!Err_trace.List}, which stops at the first
+      error.
 
       These do not change {!bind} semantics; they are the applicative sibling of the monadic traversals. Because every
       element runs, so do the side effects and work of elements after a failure. On untrusted input, check the size or
@@ -810,12 +813,12 @@ module Stats : sig
   (** Set the counter back to zero. *)
 end
 
-(** The operations of {!Err} that take [?pos], with the position mandatory. Each is the unlocated operation with [~pos]
-    required, so omitting it is a type error instead of a silent loss of provenance. Use the result qualified or behind
-    a local alias:
+(** The operations of {!Err_trace} that take [?pos], with the position mandatory. Each is the unlocated operation with
+    [~pos] required, so omitting it is a type error instead of a silent loss of provenance. Use the result qualified or
+    behind a local alias:
 
     {[
-      module E = Err.Located
+      module E = Err_trace.Located
 
       let find id = E.of_option ~pos:__POS__ (`Missing id) (lookup id)
     ]} *)
@@ -900,6 +903,6 @@ module Located : sig
     end
   end
 
-  (** {!Err.Make} with [~pos] mandatory on every operation that takes [?pos]. *)
+  (** {!Err_trace.Make} with [~pos] mandatory on every operation that takes [?pos]. *)
   module Make (D : Domain) : S with type error = D.error
 end

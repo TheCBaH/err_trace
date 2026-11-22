@@ -1,4 +1,4 @@
-open Err
+open Err_trace
 
 let pp_string = Format.pp_print_string
 

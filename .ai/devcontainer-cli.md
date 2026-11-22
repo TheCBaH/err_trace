@@ -105,7 +105,7 @@ Check before trusting a validation run:
 
 ```sh
 devcontainer exec --workspace-folder . bash -lc \
-  'test -f src/err.ml && command -v opam && opam exec -- dune --version'
+  'test -f src/err_trace.ml && command -v opam && opam exec -- dune --version'
 ```
 
 ### When `up` itself fails

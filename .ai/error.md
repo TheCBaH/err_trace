@@ -8,7 +8,7 @@ runtime configuration, public interface, implementation, printers, exception
 boundaries, framework adapters, JavaScript behavior, packaging, and test suite,
 together with the reasoning behind each.
 
-`src/err.mli` is authoritative for the interface, `README.md` is the short
+`src/err_trace.mli` is authoritative for the interface, `README.md` is the short
 introduction, and `error-changes.md` records where the library departs from the
 original baseline of this document and why.
 
@@ -18,32 +18,32 @@ original baseline of this document and why.
 opam package:        err_trace
 dune public library: err_trace
 dune library name:   err_trace  (unwrapped)
-OCaml module:        Err
+OCaml module:        Err_trace
 ```
 
-The library is unwrapped, so its single module is `Err` rather than
-`Err_trace.Err`:
+The library is unwrapped, so its single module is `Err_trace` and not a
+submodule of a wrapper:
 
 ```ocaml
-Err.fail ~pos:__POS__ (`Unknown_node id)
-Err.map_error ~pos:__POS__ (fun error -> `Decode error) result
-Err.Error.kind error
+Err_trace.fail ~pos:__POS__ (`Unknown_node id)
+Err_trace.map_error ~pos:__POS__ (fun error -> `Decode error) result
+Err_trace.Error.kind error
 ```
 
 ## Error representation
 
-The main result type is `('a, 'e) Err.t`, and its wrapped error value is
-`'e Err.Error.t`, so `Err.Error.kind` is explicit where code crosses from the
+The main result type is `('a, 'e) Err_trace.t`, and its wrapped error value is
+`'e Err_trace.Error.t`, so `Err_trace.Error.kind` is explicit where code crosses from the
 wrapper to its domain payload. Expected, recoverable failures use:
 
 ```ocaml
-('value, 'error) Err.t
+('value, 'error) Err_trace.t
 ```
 
 where:
 
 ```ocaml
-type ('value, 'error) t = ('value, 'error Err.Error.t) Stdlib.result
+type ('value, 'error) t = ('value, 'error Err_trace.Error.t) Stdlib.result
 ```
 
 `'error` is owned by the component detecting the failure. It is normally a
@@ -91,7 +91,7 @@ not become exceptions merely for convenience.
 - Accumulating independent validation errors through monadic bind.
 - State monads, general transformers, or an effects framework.
 - Native backtraces as a public wire format.
-- Interception of runtime exceptions that never cross an `Err` API.
+- Interception of runtime exceptions that never cross an `Err_trace` API.
 
 ## Error model
 
@@ -111,7 +111,7 @@ let pp_error ppf = function
   | `Invalid_shape shape ->
       Format.fprintf ppf "invalid shape of rank %d" (List.length shape)
 
-val decode : Json.t -> (Tensor.t, error) Err.t
+val decode : Json.t -> (Tensor.t, error) Err_trace.t
 ```
 
 The wrapper never replaces the domain printer or turns the payload into a
@@ -121,12 +121,12 @@ operation that forwards it to monitors for that one dispatch.
 
 ### Source location
 
-`Err.Source.t` is a cheap, backend-independent source coordinate. Every
+`Err_trace.Source.t` is a cheap, backend-independent source coordinate. Every
 error-producing and boundary operation accepts the unwrapped `__POS__` value
 directly:
 
 ```ocaml
-Err.fail ~pos:__POS__ (`Unknown_node id)
+Err_trace.fail ~pos:__POS__ (`Unknown_node id)
 ```
 
 `Source.pos` is `string * int * int * int`: file, line, start column, and end
@@ -135,7 +135,7 @@ constant at compile time. `Source.of_pos` converts it to the stored `Source.t`,
 which adapters use when a location was captured by other means:
 
 ```ocaml
-Err.Source.of_pos ("parser.ml", 4, 3, 8)
+Err_trace.Source.of_pos ("parser.ml", 4, 3, 8)
 ```
 
 Locations are explicit because an optional argument's default expression would
@@ -145,7 +145,7 @@ adapter could insert these arguments, but it is not a dependency of the package.
 
 ### Origin
 
-`Err.Origin.t` describes one semantic site. It may contain:
+`Err_trace.Origin.t` describes one semantic site. It may contain:
 
 - an explicit `Source.t`;
 - an OCaml `Printexc.raw_backtrace`;
@@ -254,7 +254,7 @@ application's result or exception: the failing monitor is removed, then its
 optional `on_error` hook receives the callback exception and a stack when the
 active backtrace policy permits one. The default hook does nothing, and an
 exception from `on_error` is ignored. A monitor callback must not invoke an
-event-producing `Err` operation; doing so is unsupported re-entrancy.
+event-producing `Err_trace` operation; doing so is unsupported re-entrancy.
 
 ## Runtime configuration
 
@@ -404,7 +404,7 @@ These are observable performance contracts; `bench/allocation.ml` measures them.
 
 ## Public interface
 
-`src/err.mli` is the authoritative interface. The listing below elides
+`src/err_trace.mli` is the authoritative interface. The listing below elides
 documentation comments; `Located` and the functor `Make`/`Domain`/`S` are only
 summarized after it.
 
@@ -800,7 +800,7 @@ module Stats : sig
 end
 ```
 
-Two further items are described by `src/err.mli` and not repeated here:
+Two further items are described by `src/err_trace.mli` and not repeated here:
 
 - `Located` repeats the operations that take `?pos` (`fail`, `of_option`,
   `map_none`, `guard`, `map_error`, `mark_error`, `import`, `export`,
@@ -809,7 +809,7 @@ Two further items are described by `src/err.mli` and not repeated here:
   error;
 - `module type Domain` (`type error` and `pp_error`) and the functor
   `Make (D : Domain) : S with type error = D.error` bind a domain printer once:
-  `S` has the printer-taking operations of `Err`, `Err.Error` and `Err.List`
+  `S` has the printer-taking operations of `Err_trace`, `Err_trace.Error` and `Err_trace.List`
   (`map2`, `iter2`) with `?pp_error` already supplied.
 
 There is no `Exn.install_printer`. The `Printexc` printer for `Exn.E` is
@@ -943,9 +943,9 @@ snapshot guarantee; removal does not wait for an in-flight callback.
 Each callback invocation is protected. If the callback raises, dispatch obtains
 its stack immediately only when the current backtrace mode is not `Never` and
 the runtime supplies one, removes that entry, then invokes `on_error`. Neither
-callback failure nor failure-hook failure is converted into an `Err` event,
+callback failure nor failure-hook failure is converted into an `Err_trace` event,
 which avoids recursive failure storms. A monitor that calls an event-producing
-`Err` function directly violates the API's non-reentrancy contract.
+`Err_trace` function directly violates the API's non-reentrancy contract.
 
 ### Constructors
 
@@ -1084,12 +1084,12 @@ Printexc.to_string exn
 ```
 
 and the default uncaught-exception reporter print the structured error rather
-than `Err.Exn.E(_)`.
+than `Err_trace.Exn.E(_)`.
 
 Raising does not itself write to stderr. Automatic printing inside a library
 would duplicate reports when callers catch, translate, retry, or log the same
 exception. Printing occurs when the exception is uncaught or when a caller
-explicitly invokes `Printexc.to_string`, `Err.Exn.pp`, or a logger.
+explicitly invokes `Printexc.to_string`, `Err_trace.Exn.pp`, or a logger.
 
 Because registration makes `Printexc.to_string` render the full diagnostic,
 code that catches `Exn.E` at an outward-facing boundary matches the constructor
@@ -1136,7 +1136,7 @@ The printer inventory is `Source.pp`, `Source.pp_pos`, `Stack.pp`, `Origin.pp`,
 `Action.pp`, `Action.Set.pp`, `Event.pp`, `Error.pp`, `Config.pp`,
 `Config.pp_backtrace`, `Config.pp_limit`, `Config.pp_make_error`,
 `Config.pp_of_strings_error`, `Observation.pp`, `Monitor.pp`,
-`Monitor.pp_callback`, `Exn.pp`, `Exn.pp_kind`, and the top-level `Err.pp` for
+`Monitor.pp_callback`, `Exn.pp`, `Exn.pp_kind`, and the top-level `Err_trace.pp` for
 `('a, 'e) t`.
 Function values have no inspectable content, so `Monitor.pp_callback` renders
 the opaque marker `<callback>` and `Monitor.pp` renders only the handle's
@@ -1172,7 +1172,7 @@ the standard `Format.formatter -> value -> unit` shape.
 ### Linear propagation
 
 ```ocaml
-open Err.Syntax
+open Err_trace.Syntax
 
 let load path =
   let* bytes = read_file path in
@@ -1191,13 +1191,13 @@ type error =
   ]
 
 let load path =
-  let open Err.Syntax in
+  let open Err_trace.Syntax in
   let* bytes =
     Reader.read path
-    |> Err.map_error ~pos:__POS__ (fun error -> `Read error)
+    |> Err_trace.map_error ~pos:__POS__ (fun error -> `Read error)
   in
   Decoder.decode bytes
-  |> Err.map_error ~pos:__POS__ (fun error -> `Decode error)
+  |> Err_trace.map_error ~pos:__POS__ (fun error -> `Decode error)
 ```
 
 The variant carries machine-readable context. The trace carries where each
@@ -1208,7 +1208,7 @@ printer to monitors observing that `Map`.
 
 ```ocaml
 let require_field name value =
-  Err.map_none ~pos:__POS__ ~error:(fun () -> `Missing_field name) value
+  Err_trace.map_none ~pos:__POS__ ~error:(fun () -> `Missing_field name) value
 ```
 
 The error thunk runs only for `None`. Use eager `of_option` when the payload is
@@ -1219,15 +1219,15 @@ raise, has effects, or depends on failure-only data.
 
 ```ocaml
 let error_monitor =
-  Err.Monitor.install (fun observation ->
+  Err_trace.Monitor.install (fun observation ->
     Logs.err (fun message ->
-      message "%a" Err.Observation.pp observation))
+      message "%a" Err_trace.Observation.pp observation))
 
 let stop_error_logging () =
-  ignore (Err.Monitor.remove error_monitor : bool)
+  ignore (Err_trace.Monitor.remove error_monitor : bool)
 ```
 
-The `Logs` dependency belongs to this adapter, not to `Err`. The callback runs
+The `Logs` dependency belongs to this adapter, not to `Err_trace`. The callback runs
 synchronously, so a slow sink should instead receive a bounded queued snapshot.
 With `max_events = 0`, this monitor still sees enabled actions even though
 errors retain no event history. Observations produced by calls that passed
@@ -1236,19 +1236,19 @@ errors retain no event history. Observations produced by calls that passed
 ### Cheap production mode
 
 ```ocaml
-let () = Err.Config.set Err.Config.deterministic
+let () = Err_trace.Config.set Err_trace.Config.deterministic
 ```
 
 Typed failures still work normally. The boundary trail is kept and no automatic
 stack is captured. This is also the policy in force at program start, so the
-call is only needed to restore it. `Err.Config.fast` is cheaper still but
+call is only needed to restore it. `Err_trace.Config.fast` is cheaper still but
 disables the whole trail, so an error that crosses several domains records none
 of those boundaries.
 
 ### Debug mode
 
 ```ocaml
-let () = Err.Config.set Err.Config.debug
+let () = Err_trace.Config.set Err_trace.Config.debug
 ```
 
 Every semantic action is retained up to the event bound, and enabled events may
@@ -1259,25 +1259,25 @@ capture call stacks.
 ```ocaml
 let configure () =
   match
-    Err.Config.make ~actions:Err.Action.Set.all ~backtrace:Err.Config.Never
+    Err_trace.Config.make ~actions:Err_trace.Action.Set.all ~backtrace:Err_trace.Config.Never
       ~max_events:32 ~max_frames:0 ~max_external_bytes:16384
   with
-  | Ok config -> Err.Config.set config
+  | Ok config -> Err_trace.Config.set config
   | Error error ->
       Format.eprintf "invalid error tracing configuration: %a@."
-        (Err.Error.pp Err.Config.pp_make_error) error
+        (Err_trace.Error.pp Err_trace.Config.pp_make_error) error
 
-let validate value = Err.guard ~pos:__POS__ ~error:`Invalid (is_valid value)
+let validate value = Err_trace.guard ~pos:__POS__ ~error:`Invalid (is_valid value)
 ```
 
 This mode yields deterministic, low-cost locations and is particularly suitable
 for JavaScript and inline expect tests. The configuration failure is itself an
-`Err.t`, so it can be matched exhaustively instead of parsed from a string.
+`Err_trace.t`, so it can be matched exhaustively instead of parsed from a string.
 
 ### Stack-safe traversal
 
 ```ocaml
-let decode_all values = Err.List.map decode_one values
+let decode_all values = Err_trace.List.map decode_one values
 ```
 
 Traversal is left-to-right, stops at the first error, preserves that error
@@ -1286,7 +1286,7 @@ unchanged, and is tail-recursive.
 ### Printable exception boundary
 
 ```ocaml
-let decode_exn input = decode input |> Err.or_raise ~pos:__POS__ ~pp_error
+let decode_exn input = decode input |> Err_trace.or_raise ~pos:__POS__ ~pp_error
 ```
 
 If caught:
@@ -1303,10 +1303,10 @@ The message contains the payload and stored error trace. No open-coded
 
 ```ocaml
 let submit_to_exception_api input =
-  decode input |> Err.export_exn ~pos:__POS__ ~pp_error
+  decode input |> Err_trace.export_exn ~pos:__POS__ ~pp_error
 ```
 
-This returns `('a, exn) result`. Its failure is a printable `Err.Exn.E`
+This returns `('a, exn) result`. Its failure is a printable `Err_trace.Exn.E`
 containing the error wrapper with an `Export` event; no exception is raised by
 the adapter.
 
@@ -1317,10 +1317,10 @@ states this explicitly:
 
 ```ocaml
 val validate_all :
-  Input.t -> (unit, validation_error Err.Accum.errors) Err.t
+  Input.t -> (unit, validation_error Err_trace.Accum.errors) Err_trace.t
 ```
 
-`Err.Accum.map`, `iter`, `all`, and `both` run every independent item and retain
+`Err_trace.Accum.map`, `iter`, `all`, and `both` run every independent item and retain
 each failure wrapper. `Accum.lift` turns one ordinary result into a one-element
 batch, so a mostly accumulating chain can include a sequential step.
 `Accum.fold_errors combine` crosses in the other direction: a function may
@@ -1331,13 +1331,13 @@ trail and records no `Map` event.
 Because every item runs, so does its work. A size or cost ceiling on untrusted
 input must be checked before entering an accumulating traversal; accumulation
 belongs only in the bounded portion after that gate. None of these operations
-changes `Err.bind` semantics.
+changes `Err_trace.bind` semantics.
 
 ## Framework interoperability
 
 ### General rule
 
-Frameworks polymorphic in their error type can usually consume `Err.t` directly,
+Frameworks polymorphic in their error type can usually consume `Err_trace.t` directly,
 because it uses ordinary `Ok` and `Error` constructors. Conversion is required
 when a framework fixes its error type, uses exceptions, serializes values, or
 expects a human-readable diagnostic.
@@ -1352,17 +1352,17 @@ The questions each conversion answers are:
 
 ### Conversion summary
 
-| Representation | Into `Err` | Out of `Err` | Loss |
+| Representation | Into `Err_trace` | Out of `Err_trace` | Loss |
 |---|---|---|---|
 | Generic `Stdlib.result` with wrapper error | None | None | None |
 | Bare `('a, 'e) result` | Wrap at `Import` boundary | Unwrap after `Export` | Export loses trace |
 | Exception API | `protect` selected exceptions | `to_exn`, `export_exn`, or `or_raise` | None when structured exception retained |
 | Jane Street `Or_error.t` | Store `Base.Error.t` in a typed variant | Render/build `Base.Error.t` | Typed row normally erased on export |
 | Async `Or_error.t Deferred.t` | Map inside `Deferred.t` | Map inside `Deferred.t` | Same as `Or_error` |
-| `Lwt_result.t` | Map error inside `Lwt.t` | Compatible when error is `Err.Error.t` | None if wrapper retained |
+| `Lwt_result.t` | Map error inside `Lwt.t` | Compatible when error is `Err_trace.Error.t` | None if wrapper retained |
 | Rresult `R.t` | Direct result composition or named import | Direct composition or named export | None unless wrapper is dropped |
 | Cmdliner term result | Rarely imported | Convert to `` `Msg string `` | Typed payload/trace rendered then lost |
-| Mirage abstract error | Implement abstract type as `domain_error Err.Error.t` | Usually none | None |
+| Mirage abstract error | Implement abstract type as `domain_error Err_trace.Error.t` | Usually none | None |
 | Compiler diagnostic | `Location.t` becomes a `Source.t` in `Error.make_at` | Translate at reporting boundary | Domain-specific |
 | Octez `tzresult` | Store complete trace as typed variant | Inject registered error | Depends on encoding |
 | HTTP/JSON/RPC | Decode stable code to typed variant | Encode safe public error | Never transmit native trace by default |
@@ -1370,14 +1370,14 @@ The questions each conversion answers are:
 ### Bare standard results
 
 ```ocaml
-let of_result result = Err.import ~pos:__POS__ Fun.id result
-let to_result result = Err.export ~pos:__POS__ result
+let of_result result = Err_trace.import ~pos:__POS__ Fun.id result
+let to_result result = Err_trace.export ~pos:__POS__ result
 ```
 
-`Err.import` records `Import` and maps the bare error into this domain;
-`Err.export` records `Export` and then drops the wrapper. Both are named
+`Err_trace.import` records `Import` and maps the bare error into this domain;
+`Err_trace.export` records `Export` and then drops the wrapper. Both are named
 rather than inlined: one captures only the import boundary, and the other
-deliberately discards trace data. `Err.payload` drops the wrapper without
+deliberately discards trace data. `Err_trace.payload` drops the wrapper without
 recording an event.
 
 ### Jane Street errors
@@ -1390,11 +1390,11 @@ type error = [ `Jane_street of Base.Error.t ]
 let of_or_error result =
   result
   |> Stdlib.Result.map_error
-       (fun error -> Err.Error.make (`Jane_street error))
-  |> Err.mark_error Err.Action.Import
+       (fun error -> Err_trace.Error.make (`Jane_street error))
+  |> Err_trace.mark_error Err_trace.Action.Import
 ```
 
-Export may render `Err.Error.pp` into `Base.Error.of_string`, or build a
+Export may render `Err_trace.Error.pp` into `Base.Error.of_string`, or build a
 structured S-expression with stable fields. Either erases the compile-time error
 row from the resulting `Or_error.t`, so conversion belongs at a boundary.
 
@@ -1403,8 +1403,8 @@ row from the resulting `Or_error.t`, so conversion belongs at a boundary.
 Keep asynchrony outside the typed result:
 
 ```ocaml
-('a, 'e) Err.t Lwt.t
-('a, 'e) Err.t Async.Deferred.t
+('a, 'e) Err_trace.t Lwt.t
+('a, 'e) Err_trace.t Async.Deferred.t
 ```
 
 Map conversions inside the promise/deferred value. Lwt cancellation remains an
@@ -1494,12 +1494,12 @@ Backend adapters classify only documented JavaScript errors and convert their
 
 ```ocaml
 let origin_of_javascript_stack ~pos runtime stack =
-  let stack = Err.Stack.of_external ~runtime ~stack in
-  Err.Origin.make ~source:(Err.Source.of_pos pos) ~stack ()
+  let stack = Err_trace.Stack.of_external ~runtime ~stack in
+  Err_trace.Origin.make ~source:(Err_trace.Source.of_pos pos) ~stack ()
 ```
 
-The imported error is then built with `Err.Error.make_at` and marked with
-`Err.mark_error ~pos Err.Action.Catch`, so the boundary is recorded without the
+The imported error is then built with `Err_trace.Error.make_at` and marked with
+`Err_trace.mark_error ~pos Err_trace.Action.Catch`, so the boundary is recorded without the
 library recapturing an OCaml call stack.
 
 For js_of_ocaml, catch `Js_error.Exn`, inspect `name`, `message`, and `stack`,
@@ -1571,13 +1571,13 @@ async function settleExpected(promise) {
 }
 ```
 
-Do not reject with an OCaml `Err.Error.t`; handwritten JavaScript cannot safely
+Do not reject with an OCaml `Err_trace.Error.t`; handwritten JavaScript cannot safely
 inspect it. Do not translate every rejection into a domain error; cancellation
 and unexpected failures must retain their native behavior.
 
 ### Optional JavaScript stack capture
 
-`Err.fail` does not allocate `new Error()` under JavaScript. Doing so on every
+`Err_trace.fail` does not allocate `new Error()` under JavaScript. Doing so on every
 failure is expensive and requires backend-specific code. A future optional
 adapter may capture `new Error().stack` and call `Error.make_at`, controlled by
 the same backtrace policy.
@@ -1590,7 +1590,7 @@ boundary diagnostics without coupling the package to either compiler.
 
 Melange support is a separate package, `err_trace-melange`, so that the native
 `err_trace` package needs no `melange` dependency. Its library lives in
-`melange/src`, which copies `err.ml`/`err.mli` and builds the same sources with
+`melange/src`, which copies `err_trace.ml`/`err_trace.mli` and builds the same sources with
 `(modes byte native melange)`. The stanza is enabled only when
 `ERR_TRACE_MELANGE=true` (set by the `err_trace-melange` opam build) or
 `ERR_TRACE_TEST_MELANGE=true` (the tests); the ordinary `src/dune` stanza is
@@ -1637,7 +1637,7 @@ process configuration, and use fixed `Source.pos` literals so goldens are
 stable. The cases are:
 
 - configuration presets, parsing, and portable bounds;
-- configuration errors dog-food `Err.t`, and every public data type prints;
+- configuration errors dog-food `Err_trace.t`, and every public data type prints;
 - success paths and ordinary propagation add no trace data;
 - mapping is failure-only and retains provenance;
 - `Error.map_kind` records its own typed conversion point;
@@ -1662,7 +1662,7 @@ JavaScript engine formatting are not stable, so provenance tests assert
 structural properties (`Origin.source`/`Origin.stack` presence, event names,
 counts) and printer tests assert only the library's own framing. Rendered native
 stack text is checked by properties only: no empty line, no `Raised`/`Called`
-runtime wording, and a first frame outside `err.ml`.
+runtime wording, and a first frame outside `err_trace.ml`.
 
 ### Format composition tests
 

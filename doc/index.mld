@@ -1,109 +1,109 @@
 {0 Err_trace: typed errors with bounded tracing}
 
-Full per-function reference: {{!module:Err}[Err]}.
+Full per-function reference: {{!module:Err_trace}[Err_trace]}.
 
 {1 Overview}
 
-{!module:Err} keeps recoverable failures typed while attaching optional,
-bounded diagnostic provenance. A value has type [('a, 'e) Err.t]: its error
-branch contains the original ['e] payload in {!Err.Error.t}, rather than a
+{!module:Err_trace} keeps recoverable failures typed while attaching optional,
+bounded diagnostic provenance. A value has type [('a, 'e) Err_trace.t]: its error
+branch contains the original ['e] payload in {!Err_trace.Error.t}, rather than a
 string or global error registry.
 
-Use {!Err.fail} where a component detects an expected failure. Use
-{!Err.map_error} when crossing an error-domain boundary, and use
-{!Err.mark_error} only for named import/export boundaries. Ordinary {!Err.bind}
-and {!Err.map} propagation does not add trace noise.
+Use {!Err_trace.fail} where a component detects an expected failure. Use
+{!Err_trace.map_error} when crossing an error-domain boundary, and use
+{!Err_trace.mark_error} only for named import/export boundaries. Ordinary {!Err_trace.bind}
+and {!Err_trace.map} propagation does not add trace noise.
 
-A domain has one printer, so {!Err.Make} binds it once for the operations that
-take one; {!Err.fail} and its siblings remain available for payload rows that
+A domain has one printer, so {!Err_trace.Make} binds it once for the operations that
+take one; {!Err_trace.fail} and its siblings remain available for payload rows that
 must stay open.
 
 {1 Quick start}
 
 {[
 let parse value =
-  Err.of_option ~pos:__POS__ `Missing value
+  Err_trace.of_option ~pos:__POS__ `Missing value
 
 let decode value =
-  Err.map_error ~pos:__POS__ (fun error -> `Decode error)
+  Err_trace.map_error ~pos:__POS__ (fun error -> `Decode error)
     (parse value)
 ]}
 
-The payload remains machine-readable: callers can match {!Err.Error.kind}.
+The payload remains machine-readable: callers can match {!Err_trace.Error.kind}.
 The error wrapper retains the original detection origin and selected semantic
-events, which can be rendered with {!Err.Error.pp} when a domain printer is
+events, which can be rendered with {!Err_trace.Error.pp} when a domain printer is
 available.
 
 {1 Runtime policy}
 
-Choose a policy during process startup with {!Err.Config.set}:
+Choose a policy during process startup with {!Err_trace.Config.set}:
 
-- {!Err.Config.fast} records no events at all and captures no stacks: it
+- {!Err_trace.Config.fast} records no events at all and captures no stacks: it
   disables the whole semantic trail, not only stack capture.
-- {!Err.Config.deterministic} keeps the boundary trail and captures no stacks.
+- {!Err_trace.Config.deterministic} keeps the boundary trail and captures no stacks.
   This is the production preset for identical diagnostics on every backend,
   and the policy in force at program start.
-- {!Err.Config.with_stacks} retains the boundary events and an origin stack
+- {!Err_trace.Config.with_stacks} retains the boundary events and an origin stack
   (this preset was named [default]).
-- {!Err.Config.debug} records every semantic action.
+- {!Err_trace.Config.debug} records every semantic action.
 
 How much trail is kept and whether stacks are captured are independent axes;
 the first ladder bundles them, and [deterministic] is the useful off-diagonal
 combination.
 
-{!Err.Config.with_config} installs a policy for one call and restores the
+{!Err_trace.Config.with_config} installs a policy for one call and restores the
 previous one even if that call raises. It is process-wide, not scoped to a
 thread or domain.
 
 Limits cap retained events, native frames, and imported stack bytes. Enabled
-monitors still receive an event when [max_events] is zero. {!Err.Config.Never}
+monitors still receive an event when [max_events] is zero. {!Err_trace.Config.Never}
 never automatically calls [Printexc.get_callstack]; an error detected without
 [~pos] under that policy therefore has no origin at all.
 
-{!Err.Config.make} and {!Err.Config.of_strings} return the library's own traced
+{!Err_trace.Config.make} and {!Err_trace.Config.of_strings} return the library's own traced
 result type with closed polymorphic-variant error languages. Configuration
 failures can therefore be matched structurally or rendered with
-{!Err.Config.pp_make_error} and {!Err.Config.pp_of_strings_error}.
+{!Err_trace.Config.pp_make_error} and {!Err_trace.Config.pp_of_strings_error}.
 
 {1 Boundaries and interoperability}
 
-Use {!Err.protect} only to turn specifically classified exceptions into typed
-errors. At an API that requires exceptions, {!Err.to_exn}, {!Err.export_exn},
-and {!Err.or_raise} construct or raise a printable structured exception; most
+Use {!Err_trace.protect} only to turn specifically classified exceptions into typed
+errors. At an API that requires exceptions, {!Err_trace.to_exn}, {!Err_trace.export_exn},
+and {!Err_trace.or_raise} construct or raise a printable structured exception; most
 code needs only [or_raise].
 
-{!Err.import} lifts a third party's bare result and records [Import];
-{!Err.export} records [Export] and then drops the wrapper, so a deliberate drop
-goes through one named helper. {!Err.payload} is the same unwrap without the
-marking, and {!Err.Error.pp_kind} renders a payload with no provenance for a
+{!Err_trace.import} lifts a third party's bare result and records [Import];
+{!Err_trace.export} records [Export] and then drops the wrapper, so a deliberate drop
+goes through one named helper. {!Err_trace.payload} is the same unwrap without the
+marking, and {!Err_trace.Error.pp_kind} renders a payload with no provenance for a
 wire response or a user-facing message.
 
-Adapters should use {!Err.Error.make_at} to import an externally captured
-origin. {!Err.Stack.of_external} and [max_external_bytes] exist for a JavaScript
+Adapters should use {!Err_trace.Error.make_at} to import an externally captured
+origin. {!Err_trace.Stack.of_external} and [max_external_bytes] exist for a JavaScript
 host that hands the program its own stack; other consumers can ignore them. The
 base library has no third-party runtime dependencies.
 
-Code that already holds {!Err.Error.t} uses {!Err.Error.map_kind} with
+Code that already holds {!Err_trace.Error.t} uses {!Err_trace.Error.map_kind} with
 [~pos:__POS__] when crossing a typed error-domain boundary. The conversion
 retains the original detection origin and records one [Map] event.
 
 {1 Escaping a recursive walk}
 
 A deeply recursive traversal cannot thread a result through every arm without
-being rewritten around {!Err.bind}. {!Err.Escape.with_escape} establishes a
-scoped exit and {!Err.Escape.throw} takes it, building the error wrapper at the
+being rewritten around {!Err_trace.bind}. {!Err_trace.Escape.with_escape} establishes a
+scoped exit and {!Err_trace.Escape.throw} takes it, building the error wrapper at the
 throw. Each call generates its own exception, so nested and concurrent uses
-cannot catch one another. {!Err.Escape.or_throw} bridges an ordinary
+cannot catch one another. {!Err_trace.Escape.or_throw} bridges an ordinary
 result-returning call into such a walk.
 
-{!Err.protect} is its companion for the opposite direction: absorbing an
+{!Err_trace.protect} is its companion for the opposite direction: absorbing an
 exception raised by foreign code, rather than establishing an exit for the
 current module's own recursion.
 
 {1 Collecting every failure}
 
-{!Err.List} stops at the first error. {!Err.Accum} runs every element and
+{!Err_trace.List} stops at the first error. {!Err_trace.Accum} runs every element and
 reports every failure, which is what a validator over an untrusted document or a
 compiler pass over a translation unit needs. Its failure is a list of
-{!Err.Error.t}, so each problem keeps its own detection origin, and its result is
-an ordinary {!Err.t} that still composes. {!Err.bind} semantics are unchanged.
+{!Err_trace.Error.t}, so each problem keeps its own detection origin, and its result is
+an ordinary {!Err_trace.t} that still composes. {!Err_trace.bind} semantics are unchanged.

@@ -1,4 +1,4 @@
-open Err
+open Err_trace
 
 let await predicate =
   while not (predicate ()) do

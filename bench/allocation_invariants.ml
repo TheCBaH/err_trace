@@ -1,4 +1,4 @@
-open Err
+open Err_trace
 
 let measure ~iterations f =
   Gc.full_major ();
