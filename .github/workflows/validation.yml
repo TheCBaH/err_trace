@@ -78,6 +78,9 @@ jobs:
       - name: JavaScript adapter conformance
         if: matrix.feature == 'javascript'
         run: ${{ steps.devcontainer.outputs.exec }} make test-js test-melange
+      - name: Installed namespace check
+        if: matrix.feature == 'javascript'
+        run: ${{ steps.devcontainer.outputs.exec }} make namespace-check
       - name: Octez adapter conformance
         if: matrix.feature == 'octez'
         run: ${{ steps.devcontainer.outputs.exec }} make test-octez
